@@ -79,6 +79,41 @@ function sourceEdition(meta: unknown) {
   return match ? `${match[1]} ${match[0].split(/\s+/).pop()} World Economic Outlook` : String(value.source || "IMF World Economic Outlook vintage");
 }
 
+function extractImfSdmxValues(payload: unknown, indicator: string): Record<string, Record<string, number>> {
+  if (!payload || typeof payload !== "object") return {};
+  const root = payload as JsonRecord;
+  const message = (root.data || root) as JsonRecord;
+  const dataset = message.dataSets?.[0] as JsonRecord | undefined;
+  const structure = message.structures?.[0] as JsonRecord | undefined;
+  const dimensions = structure?.dimensions?.series as JsonRecord[] | undefined;
+  const periods = structure?.dimensions?.observation?.[0]?.values as JsonRecord[] | undefined;
+  const series = dataset?.series as Record<string, JsonRecord> | undefined;
+  if (!Array.isArray(dimensions) || !Array.isArray(periods) || !series) return {};
+
+  const countryPosition = dimensions.findIndex((dimension) => dimension.id === "COUNTRY");
+  const indicatorPosition = dimensions.findIndex((dimension) => dimension.id === "INDICATOR");
+  if (countryPosition < 0 || indicatorPosition < 0) return {};
+
+  const values: Record<string, Record<string, number>> = {};
+  for (const [key, row] of Object.entries(series)) {
+    const indexes = key.split(":").map(Number);
+    const countryCode = String(dimensions[countryPosition]?.values?.[indexes[countryPosition]]?.id || "").toUpperCase();
+    const indicatorCode = String(dimensions[indicatorPosition]?.values?.[indexes[indicatorPosition]]?.id || "").toUpperCase();
+    if (!/^[A-Z]{3}$/.test(countryCode) || indicatorCode !== indicator) continue;
+
+    const observations = row?.observations as Record<string, unknown[]> | undefined;
+    if (!observations) continue;
+    for (const [periodIndex, tuple] of Object.entries(observations)) {
+      const period = periods[Number(periodIndex)];
+      const year = String(period?.value || period?.id || "");
+      const value = Number(Array.isArray(tuple) ? tuple[0] : tuple);
+      if (!/^\\d{4}$/.test(year) || !Number.isFinite(value)) continue;
+      (values[countryCode] ||= {})[year] = value;
+    }
+  }
+  return values;
+}
+
 function countryLabel(payload: unknown, code: string, fallback: string) {
   if (!payload || typeof payload !== "object") return fallback;
   const root = payload as JsonRecord;
@@ -214,44 +249,28 @@ export async function GET(request: Request) {
   // Requesting just this compact window reduces cold-start payload size and provider latency.
   const currentYear = new Date().getUTCFullYear();
   const imfPeriods = Array.from({ length: 7 }, (_, index) => currentYear - 1 + index).join(",");
-  const imfPeriodQuery = `?periods=${encodeURIComponent(imfPeriods)}`;
+  const imfPeriodQuery = `?startPeriod=${currentYear - 1}&endPeriod=${currentYear + 5}&format=jsondata`;
   const imfPromise = Promise.allSettled([
-    getJson(`${IMF_BASE}/NGDPD${imfPeriodQuery}`, forceRefresh, REFRESH_SECONDS, 30000),
-    getJson(`${IMF_BASE}/NGDP_RPCH${imfPeriodQuery}`, forceRefresh, REFRESH_SECONDS, 30000),
-    getJson(`${IMF_BASE}/countries`, forceRefresh, 86400, 30000),
-    getJson(`${IMF_BASE}/indicators`, forceRefresh, 86400, 30000),
+    getJson(`https://api.imf.org/external/sdmx/3.0/data/dataflow/IMF.RES/WEO/+/*.NGDPD.A${imfPeriodQuery}`, forceRefresh, REFRESH_SECONDS, 30000),
+    getJson(`https://api.imf.org/external/sdmx/3.0/data/dataflow/IMF.RES/WEO/+/*.NGDP_RPCH.A${imfPeriodQuery}`, forceRefresh, REFRESH_SECONDS, 30000),
   ]);
 
   const [, imfResults] = await Promise.all([worldBankPromise, imfPromise]);
-  const [imfGdpResult, imfGrowthResult, imfCountriesResult, imfIndicatorsResult] = imfResults;
+  const [imfGdpResult, imfGrowthResult] = imfResults;
 
   let outlook: Observation[] = [];
-  let imfEdition = "IMF indicator metadata unavailable";
+  let imfEdition = "IMF World Economic Outlook · SDMX 3.0";
   let imfLastModified: string | null = null;
   let imfStatus: "live" | "unavailable" = "unavailable";
 
-  const imfIndicatorCatalog = imfIndicatorsResult.status === "fulfilled" ? imfIndicatorsResult.value : null;
-  const imfGdpMetadata = indicatorMetadata(imfIndicatorCatalog, "NGDPD") as JsonRecord | undefined;
-  if (imfGdpMetadata) {
-    imfEdition = sourceEdition(imfGdpMetadata);
-    imfLastModified = String(imfGdpMetadata["last-modified"] || "") || null;
-  } else if (imfIndicatorsResult.status === "rejected") {
-    warnings.push("IMF indicator metadata could not be retrieved: " + (imfIndicatorsResult.reason instanceof Error ? imfIndicatorsResult.reason.message : "Unknown source error"));
-  }
-
   if (imfGdpResult.status === "fulfilled") {
-    const gdpValues = extractImfValues(imfGdpResult.value, "NGDPD");
+    const gdpValues = extractImfSdmxValues(imfGdpResult.value, "NGDPD");
     const growthValues = imfGrowthResult.status === "fulfilled"
-      ? extractImfValues(imfGrowthResult.value, "NGDP_RPCH")
+      ? extractImfSdmxValues(imfGrowthResult.value, "NGDP_RPCH")
       : {};
-    const countryCatalog = imfCountriesResult.status === "fulfilled"
-      ? (imfCountriesResult.value as JsonRecord)
-      : {};
+
     if (imfGrowthResult.status === "rejected") {
-      warnings.push("IMF real GDP growth values could not be retrieved; nominal GDP projections will not show the real-growth companion series.");
-    }
-    if (imfCountriesResult.status === "rejected") {
-      warnings.push("IMF country labels could not be retrieved; World Bank country names are used where available.");
+      warnings.push("IMF real GDP growth values could not be retrieved; nominal GDP estimates and projections are shown without the companion real-growth measure.");
     }
 
     if (Object.keys(gdpValues).length > 0) {
@@ -268,18 +287,19 @@ export async function GET(request: Request) {
       outlook = Object.entries(gdpValues).flatMap(([rawCode, annualValues]) => {
         const code = rawCode.toUpperCase();
         if (!/^[A-Z]{3}$/.test(code) || !actualCountryCodes.has(code) || !annualValues || typeof annualValues !== "object") return [];
-        const name = countryLabel(countryCatalog, code, worldBankNames.get(code) || code);
+        const name = worldBankNames.get(code) || code;
         return Object.entries(annualValues).flatMap(([rawYear, rawValue]) => {
           const year = Number(rawYear);
-          const billionsOfUsd = Number(rawValue);
+          const currentUsd = Number(rawValue);
           const latestReported = latestWorldBankYear.get(code);
-          if (!latestReported || !Number.isInteger(year) || year <= latestReported || !Number.isFinite(billionsOfUsd) || billionsOfUsd <= 0) return [];
+          if (!latestReported || !Number.isInteger(year) || year <= latestReported || !Number.isFinite(currentUsd) || currentUsd <= 0) return [];
           const growth = Number(growthValues?.[code]?.[rawYear]);
           return [{
             code,
             name,
             year,
-            gdp: billionsOfUsd * 1_000_000_000,
+            // IMF SDMX WEO NGDPD is already expressed in current US dollars.
+            gdp: currentUsd,
             realGrowth: Number.isFinite(growth) ? growth : null,
             isAggregate: false,
           }];
@@ -287,14 +307,14 @@ export async function GET(request: Request) {
       }).sort((a, b) => a.code.localeCompare(b.code) || a.year - b.year);
 
       if (!outlook.length) {
-        warnings.push("The IMF GDP time-series endpoint responded, but did not return country estimates beyond the latest World Bank reported years.");
+        warnings.push("The IMF WEO feed responded, but did not return estimates or projections beyond the latest World Bank reported years.");
       }
     } else {
-      warnings.push("The IMF GDP time-series endpoint responded without a usable NGDPD values collection.");
+      warnings.push("The IMF WEO SDMX endpoint responded without a usable NGDPD country series.");
     }
   } else {
     const imfGdpError = imfGdpResult.reason instanceof Error ? imfGdpResult.reason.message : "Unknown source error";
-    warnings.push("IMF GDP time-series request failed: " + imfGdpError);
+    warnings.push("IMF World Economic Outlook request failed: " + imfGdpError);
   }
 
   const years = series.map((row) => row.year);
