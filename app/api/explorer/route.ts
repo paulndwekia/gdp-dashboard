@@ -95,11 +95,11 @@ async function searchIndicators(query: string) {
 async function fetchIndicatorSeries(indicator: string, country: string, startYear: number, endYear: number) {
   const url = `${WB_API}/country/${encodeURIComponent(country)}/indicator/${encodeURIComponent(indicator)}?format=json&per_page=500&page=1&date=${startYear}:${endYear}&source=2`;
   const payload = await getJson(url, 21600);
-  if (!Array.isArray(payload) || !Array.isArray(payload[1])) {
+  if (!Array.isArray(payload) || (payload[1] !== null && payload[1] !== undefined && !Array.isArray(payload[1]))) {
     throw new Error("The World Bank returned an unexpected indicator response.");
   }
   const metadata = payload[0] as JsonRecord;
-  const rows = payload[1] as JsonRecord[];
+  const rows = Array.isArray(payload[1]) ? payload[1] as JsonRecord[] : [];
   return { rows, sourceUpdated: cleanText(metadata.lastupdated) || null };
 }
 
