@@ -126,7 +126,11 @@ export async function GET(request: Request) {
           name,
           year,
           value,
-          status: cleanText(record.obs_status) || "reported",
+          status: cleanText(record.obs_status).toUpperCase() === "F"
+            ? "Forecast (source flag F)"
+            : cleanText(record.obs_status)
+              ? "Flagged source observation (" + cleanText(record.obs_status) + ")"
+              : "Reported source observation",
           footnote: cleanText(record.obs_status),
         }];
       }).sort((a, b) => a.year - b.year || a.name.localeCompare(b.name));
