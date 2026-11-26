@@ -248,7 +248,6 @@ export async function GET(request: Request) {
   // The Outlook panel only uses the latest estimate and forward projection years.
   // Requesting just this compact window reduces cold-start payload size and provider latency.
   const currentYear = new Date().getUTCFullYear();
-  const imfPeriods = Array.from({ length: 7 }, (_, index) => currentYear - 1 + index).join(",");
   const imfPeriodQuery = `?startPeriod=${currentYear - 1}&endPeriod=${currentYear + 5}&format=jsondata`;
   const imfPromise = Promise.allSettled([
     getJson(`https://api.imf.org/external/sdmx/3.0/data/dataflow/IMF.RES/WEO/+/*.NGDPD.A${imfPeriodQuery}`, forceRefresh, REFRESH_SECONDS, 30000),
