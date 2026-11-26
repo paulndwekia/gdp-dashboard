@@ -23,6 +23,7 @@ type Observation = {
   name: string;
   year: number;
   gdp: number;
+  isAggregate?: boolean;
 };
 
 type OutlookObservation = Observation & { realGrowth?: number | null };
@@ -216,7 +217,7 @@ export default function Home() {
       })
       .then((result: Dataset) => {
         if (!alive) return;
-        const availableCountries = result.series.filter((row) => !AGGREGATES.has(row.code));
+        const availableCountries = result.series.filter((row) => !row.isAggregate && !AGGREGATES.has(row.code));
         const years = availableCountries.map((row) => row.year).filter(Number.isFinite);
         if (!availableCountries.length || !years.length) {
           throw new Error("The GDP source returned no usable national observations. Refresh the page to retry the source.");
@@ -241,10 +242,12 @@ export default function Home() {
     setRefreshing(true);
     setRefreshMessage("");
     try {
-      const response = await fetch("/api/gdp?refresh=1");
+      const response = await fetch("/api/gdp?refresh=1", { signal: AbortSignal.timeout(55000) });
       if (!response.ok) throw new Error("The live data sources did not respond. Please try again.");
       const result = await response.json() as Dataset;
+      if (!result.series?.length) throw new Error("The source returned no GDP observations. The previous data has been kept.");
       setData(result);
+      setLoadError("");
       lastCheckRef.current = Date.now();
       setRangeEnd((current) => Math.max(current, result.lastYear));
       if (result.warnings.length) {
@@ -265,7 +268,7 @@ export default function Home() {
     const checkSources = async () => {
       if (document.visibilityState !== "visible") return;
       try {
-        const response = await fetch("/api/gdp?refresh=1");
+        const response = await fetch("/api/gdp?refresh=1", { signal: AbortSignal.timeout(55000) });
         if (!response.ok) throw new Error("Background source check failed.");
         const result = await response.json() as Dataset;
         setData(result);
@@ -278,7 +281,7 @@ export default function Home() {
     };
     const timer = window.setInterval(checkSources, 6 * 60 * 60 * 1000);
     const onFocus = () => {
-      if (Date.now() - lastCheckRef.current >= 6 * 60 * 60 * 1000) void checkSources();
+      if (lastCheckRef.current > 0 && Date.now() - lastCheckRef.current >= 6 * 60 * 60 * 1000) void checkSources();
     };
     window.addEventListener("focus", onFocus);
     return () => {
@@ -288,8 +291,8 @@ export default function Home() {
   }, []);
 
   const rows = data?.series || [];
-  const countryRows = useMemo(() => rows.filter((row) => !AGGREGATES.has(row.code)), [rows]);
-  const aggregateRows = useMemo(() => rows.filter((row) => AGGREGATES.has(row.code)), [rows]);
+  const countryRows = useMemo(() => rows.filter((row) => !row.isAggregate && !AGGREGATES.has(row.code)), [rows]);
+  const aggregateRows = useMemo(() => rows.filter((row) => row.isAggregate || AGGREGATES.has(row.code)), [rows]);
   const countryNames = useMemo(
     () => Array.from(new Set(countryRows.map((row) => row.name))).sort((a, b) => a.localeCompare(b)),
     [countryRows]
@@ -402,6 +405,17 @@ export default function Home() {
       activeCountryRows[activeCountryRows.length - 1].year - activeCountryRows[0].year)
     : null;
 
+  function selectProfileCountry(name: string) {
+    setCountry(name);
+    const observations = countryRows.filter((row) => row.name === name).sort((a, b) => a.year - b.year);
+    if (observations.length) {
+      const first = observations[0].year;
+      const last = observations[observations.length - 1].year;
+      setRangeStart(Math.max(first, last - 22));
+      setRangeEnd(last);
+    }
+  }
+
   function toggleCompare(name: string) {
     setCompareNames((current) =>
       current.includes(name)
@@ -428,8 +442,17 @@ export default function Home() {
     "Methodology": "Review the source, coverage, definitions and limits behind every calculation.",
   };
 
-  if (loadError) {
-    return <main className="loading-shell"><div className="eyebrow">GDP Research</div><h1>Dataset unavailable</h1><p>{loadError}</p></main>;
+  if (loadError && !data) {
+    return (
+      <main className="loading-shell">
+        <div className="eyebrow">GDP Research</div>
+        <h1>Dataset unavailable</h1>
+        <p>{loadError}</p>
+        <button className="refresh-button" onClick={refreshDataset} disabled={refreshing}>
+          {refreshing ? "Retrying…" : "Retry data connection"}
+        </button>
+      </main>
+    );
   }
   if (!data) {
     return <main className="loading-shell"><div className="brand-mark">GR</div><div className="eyebrow">Independent economic research</div><h1>GDP Research</h1><p>Preparing the historical dataset…</p><div className="loading-line" /></main>;
@@ -525,6 +548,7 @@ export default function Home() {
             <h1>{active === "Overview" ? "The global economy, in numbers" : active}</h1>
             <p>{pageDescription[active]}</p>
           </div>
+          {refreshMessage && <p className="refresh-message" role="status">{refreshMessage}</p>}
 
           {active === "Overview" && (
             <>
@@ -541,8 +565,10 @@ export default function Home() {
                   </div>
                   <div>
                     <span className="freshness-label">IMF · OUTLOOK</span>
-                    <strong>{data.outlookEdition}</strong>
-                    <small>{data.imfLastModified ? "Indicator last modified " + data.imfLastModified : "Release date shown by the source vintage"} · Estimates and projections are kept separate from reported data</small>
+                    <strong>{data.imfStatus === "live" ? data.outlookEdition : "IMF outlook feed unavailable"}</strong>
+                    <small>{data.imfStatus === "live"
+                      ? (data.imfLastModified ? "Indicator last modified " + data.imfLastModified : "Release vintage supplied by the source") + " · Estimates and projections are kept separate from reported data"
+                      : "Historical World Bank GDP remains available. The latest IMF estimate and projection feed could not be retrieved."}</small>
                   </div>
                   <div>
                     <span className="freshness-label">THIS DASHBOARD</span>
@@ -608,8 +634,10 @@ export default function Home() {
                   </div>
                   <div className="inline-select">
                     <label htmlFor="outlook-year">OUTLOOK YEAR</label>
-                    <select id="outlook-year" value={String(outlookYear)} onChange={(event) => setOutlookYear(Number(event.target.value))}>
-                      {outlookYears.map((year) => <option key={year} value={year}>{year}{year === new Date().getFullYear() ? " · current-year estimate" : year > new Date().getFullYear() ? " · projection" : ""}</option>)}
+                    <select id="outlook-year" value={String(outlookYear)} disabled={!outlookYears.length} onChange={(event) => setOutlookYear(Number(event.target.value))}>
+                      {outlookYears.length
+                        ? outlookYears.map((year) => <option key={year} value={year}>{year}{year === new Date().getFullYear() ? " · current-year estimate" : year > new Date().getFullYear() ? " · projection" : ""}</option>)
+                        : <option value={String(outlookYear)}>No outlook years available</option>}
                     </select>
                   </div>
                 </div>
@@ -634,14 +662,15 @@ export default function Home() {
                     </div>
                   </>
                 ) : (
-                  <p className="chart-note">The IMF outlook feed is temporarily unavailable for this year. Use Refresh to check the source again.</p>
+                  <p className="chart-note">{data.imfStatus === "live"
+                    ? "The IMF feed is connected, but it returned no GDP estimates or projections beyond the World Bank reported series for the selected year."
+                    : "The IMF outlook feed is unavailable. No estimates or projections are displayed as if they were official. Use Refresh to check the source again."}</p>
                 )}
                 <p className="chart-note">Annual GDP at current prices. IMF values are shown separately from World Bank reported observations. Real GDP growth is the IMF indicator NGDP_RPCH and is not nominal GDP growth.</p>
               </section>
               {data.warnings.length > 0 && (
                 <div className="method-strip warning"><strong>Source notice</strong><span>{data.warnings.join(" ")}</span></div>
               )}
-              {refreshMessage && <p className="refresh-message" role="status">{refreshMessage}</p>}
               <section className="panel">
                 <div className="panel-header panel-header-wrap">
                   <div><div className="panel-kicker">COUNTRY COMPARISON</div><h2>How major economies have evolved</h2></div>
@@ -672,7 +701,7 @@ export default function Home() {
           {active === "Country profile" && (
             <>
               <section className="panel filter-panel">
-                <div className="filter-field"><label htmlFor="profile-country">ECONOMY</label><select id="profile-country" value={country} onChange={(event) => setCountry(event.target.value)}>{countryNames.map((name) => <option key={name}>{name}</option>)}</select></div>
+                <div className="filter-field"><label htmlFor="profile-country">ECONOMY</label><select id="profile-country" value={country} onChange={(event) => selectProfileCountry(event.target.value)}>{countryNames.map((name) => <option key={name}>{name}</option>)}</select></div>
                 <div className="filter-field"><label htmlFor="profile-start">FROM YEAR · {rangeStart}</label><input id="profile-start" type="range" min={yearMin} max={rangeEnd} value={rangeStart} onChange={(event) => setRangeStart(Math.min(Number(event.target.value), rangeEnd))} /></div>
                 <div className="filter-field"><label htmlFor="profile-end">TO YEAR · {rangeEnd}</label><input id="profile-end" type="range" min={rangeStart} max={yearMax} value={rangeEnd} onChange={(event) => setRangeEnd(Math.max(Number(event.target.value), rangeStart))} /></div>
               </section>
@@ -798,16 +827,23 @@ export default function Home() {
                 const series = countryRows.filter((row) => row.name === country).sort((a, b) => a.year - b.year);
                 const last = series[series.length - 1];
                 if (!last) return <div className="panel"><p>No source observations are available for this selection.</p></div>;
-                const projection = Array.from({ length: forecastYears + 1 }, (_, index) => ({
-                  year: last.year + index,
-                  observed: index === 0 ? last.gdp : null,
-                  scenario: last.gdp * Math.pow(1 + forecastRate / 100, index),
+                const recordedHistory = series.slice(-8).map((row) => ({
+                  year: row.year,
+                  observed: row.gdp,
+                  scenario: row.year === last.year ? last.gdp : null,
                 }));
+                const scenarioPath = Array.from({ length: forecastYears }, (_, index) => ({
+                  year: last.year + index + 1,
+                  observed: null,
+                  scenario: last.gdp * Math.pow(1 + forecastRate / 100, index + 1),
+                }));
+                const projection = [...recordedHistory, ...scenarioPath];
                 const endpoint = last.gdp * Math.pow(1 + forecastRate / 100, forecastYears);
                 return <>
                   <div className="metric-grid three"><Metric label="LAST OBSERVATION" value={money(last.gdp)} footnote={String(last.year)} /><Metric label="ASSUMED ANNUAL RATE" value={percent(forecastRate)} footnote="User-selected assumption" accent="teal" /><Metric label="ILLUSTRATIVE ENDPOINT" value={money(endpoint)} footnote={"Year " + (last.year + forecastYears)} accent="blue" /></div>
                   <section className="panel"><div className="panel-header"><div><div className="panel-kicker">ILLUSTRATIVE SCENARIO</div><h2>{country} · assumed GDP path</h2></div><span className="panel-unit">CURRENT US$</span></div>
-                    <div className="chart-wrap tall"><ResponsiveContainer width="100%" height="100%"><LineChart data={projection}><CartesianGrid stroke="#E0E9E3" vertical={false} /><XAxis dataKey="year" tick={{ fill: "#718176", fontSize: 11 }} tickLine={false} axisLine={false} /><YAxis tickFormatter={tickMoney} tick={{ fill: "#718176", fontSize: 11 }} tickLine={false} axisLine={false} width={70} /><Tooltip content={<AppChartTooltip />} /><Line dataKey="scenario" name="Assumption-based scenario" stroke="#14804A" strokeWidth={2.5} dot={{ r: 3 }} /></LineChart></ResponsiveContainer></div>
+                    <div className="chart-wrap tall"><ResponsiveContainer width="100%" height="100%"><LineChart data={projection}><CartesianGrid stroke="#E0E9E3" vertical={false} /><XAxis dataKey="year" tick={{ fill: "#718176", fontSize: 11 }} tickLine={false} axisLine={false} /><YAxis tickFormatter={tickMoney} tick={{ fill: "#718176", fontSize: 11 }} tickLine={false} axisLine={false} width={70} /><Tooltip content={<AppChartTooltip />} /><Line dataKey="observed" name="Recorded GDP" stroke="#64748B" strokeWidth={2.2} dot={false} connectNulls={false} />
+                    <Line dataKey="scenario" name="Assumption-based scenario" stroke="#14804A" strokeWidth={2.5} dot={{ r: 3 }} connectNulls={false} /></LineChart></ResponsiveContainer></div>
                   </section>
                   <div className="method-strip warning"><strong>Scenario, not forecast</strong><span>This mechanical path compounds one nominal growth assumption. It is not an official forecast and does not isolate real output, inflation or exchange-rate effects.</span></div>
                 </>;
