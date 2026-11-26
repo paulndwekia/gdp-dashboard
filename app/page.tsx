@@ -216,11 +216,14 @@ export default function Home() {
       })
       .then((result: Dataset) => {
         if (!alive) return;
+        const availableCountries = result.series.filter((row) => !AGGREGATES.has(row.code));
+        const years = availableCountries.map((row) => row.year).filter(Number.isFinite);
+        if (!availableCountries.length || !years.length) {
+          throw new Error("The GDP source returned no usable national observations. Refresh the page to retry the source.");
+        }
         setData(result);
         lastCheckRef.current = Date.now();
-        const availableCountries = result.series.filter((row) => !AGGREGATES.has(row.code));
         const kenya = availableCountries.some((row) => row.name === "Kenya");
-        const years = availableCountries.map((row) => row.year);
         setCountry(kenya ? "Kenya" : (availableCountries[0]?.name || ""));
         setRangeEnd(Math.max(...years));
         setRangeStart(Math.max(Math.min(...years), Math.max(...years) - 22));
