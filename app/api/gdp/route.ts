@@ -71,19 +71,35 @@ function countryLabel(payload: unknown, code: string, fallback: string) {
 async function fetchWorldBankSeries(forceRefresh: boolean) {
   const rows: Observation[] = [];
   let lastUpdated: string | null = null;
-  let page = 1;
-  let totalPages = 1;
+  const pageSize = 3000;
 
-  while (page <= totalPages && page <= 8) {
-    const url = `https://api.worldbank.org/v2/country/all/indicator/${WORLD_BANK_INDICATOR}?format=json&per_page=20000&date=1960:2035&page=${page}`;
-    const payload = await getJson(url, forceRefresh);
+  const fetchPage = async (page: number) => {
+    const url = `https://api.worldbank.org/v2/country/all/indicator/${WORLD_BANK_INDICATOR}?format=json&per_page=${pageSize}&date=1960:2035&source=2&page=${page}`;
+    return getJson(url, forceRefresh);
+  };
+
+  const firstPayload = await fetchPage(1);
+  if (!Array.isArray(firstPayload) || !Array.isArray(firstPayload[1])) {
+    throw new Error("World Bank returned an unexpected GDP response.");
+  }
+  const firstMeta = firstPayload[0] as JsonRecord;
+  const totalPages = Math.max(1, Number(firstMeta.pages) || 1);
+  if (totalPages > 12) {
+    throw new Error(`World Bank GDP feed returned an unexpected ${totalPages}-page response; refusing to publish a partial extract.`);
+  }
+  lastUpdated = firstMeta.lastupdated || null;
+
+  const remainingPages = await Promise.all(
+    Array.from({ length: Math.max(0, totalPages - 1) }, (_, index) => fetchPage(index + 2))
+  );
+  const payloads = [firstPayload, ...remainingPages];
+
+  for (const payload of payloads) {
     if (!Array.isArray(payload) || !Array.isArray(payload[1])) {
-      throw new Error("World Bank returned an unexpected GDP response.");
+      throw new Error("World Bank returned an incomplete GDP page.");
     }
     const metadata = payload[0] as JsonRecord;
-    totalPages = Math.max(1, Number(metadata.pages) || 1);
     lastUpdated = metadata.lastupdated || lastUpdated;
-
     rows.push(...(payload[1] as JsonRecord[]).flatMap((record) => {
       const code = String(record.countryiso3code || "").trim().toUpperCase();
       const name = String(record.country?.value || "").trim();
@@ -93,7 +109,6 @@ async function fetchWorldBankSeries(forceRefresh: boolean) {
       if (observationStatus === "F" || !code || !name || !Number.isInteger(year) || !Number.isFinite(gdp) || gdp <= 0) return [];
       return [{ code, name, year, gdp }];
     }));
-    page += 1;
   }
 
   if (!rows.length) throw new Error("World Bank returned no usable GDP observations.");
@@ -102,7 +117,6 @@ async function fetchWorldBankSeries(forceRefresh: boolean) {
     lastUpdated,
   };
 }
-
 async function readBundledFallback(): Promise<Observation[]> {
   const filePath = path.join(process.cwd(), "data", "gdp_data.csv");
   const csv = await readFile(filePath, "utf8");
