@@ -83,9 +83,16 @@ export default function DataExplorer() {
   );
   const latest = filtered[filtered.length - 1];
   const previous = filtered.length > 1 ? filtered[filtered.length - 2] : null;
-  const annualChange = latest && previous && latest.year - previous.year === 1 && previous.value !== 0
-    ? ((latest.value / previous.value) - 1) * 100
+  const yearOnYearDifference = latest && previous && latest.year - previous.year === 1
+    ? latest.value - previous.value
     : null;
+  const isPercentMeasure = (selected?.unit || "").toLowerCase().includes("percent");
+  const changeLabel = isPercentMeasure ? "CHANGE FROM PRIOR YEAR" : "DIFFERENCE FROM PRIOR YEAR";
+  const changeValue = yearOnYearDifference === null
+    ? "—"
+    : isPercentMeasure
+      ? (yearOnYearDifference > 0 ? "+" : "") + yearOnYearDifference.toFixed(2) + " pp"
+      : formatValue(yearOnYearDifference, selected);
 
   async function searchIndicators(term: string) {
     setSearching(true);
@@ -227,7 +234,7 @@ export default function DataExplorer() {
           <>
             <div className="explorer-metrics">
               <div><span>LATEST VALUE</span><strong>{formatValue(latest?.value ?? NaN, selected)}</strong><small>{latest?.year ?? "—"} · {selected.unit || "source unit"}</small></div>
-              <div><span>CHANGE FROM PREVIOUS YEAR</span><strong>{annualChange === null ? "—" : (annualChange > 0 ? "+" : "") + annualChange.toFixed(2) + "%"}</strong><small>Only shown when consecutive observations exist</small></div>
+              <div><span>{changeLabel}</span><strong>{changeValue}</strong><small>{isPercentMeasure ? "Percentage-point difference" : "Only shown when consecutive observations exist"}</small></div>
               <div><span>OBSERVATIONS</span><strong>{filtered.length}</strong><small>{startYear} to {endYear}</small></div>
             </div>
             <div className="chart-wrap tall">
