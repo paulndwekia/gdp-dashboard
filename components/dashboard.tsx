@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import Link from "next/link";
 import {
   Activity, ArrowDownToLine, ArrowUpRight, BarChart3, BookOpen, ChevronDown,
@@ -38,31 +38,38 @@ const NAV = [
 ];
 
 function useWdi(indicator: IndicatorKey, countries: string, range: string) {
-  const [records, setRecords] = useState<WdiRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const requestKey = [indicator, countries, range].join("|");
+  const [state, setState] = useState<{ key: string; records: WdiRecord[]; loading: boolean; error: string }>({
+    key: "",
+    records: [],
+    loading: true,
+    error: ""
+  });
   useEffect(() => {
     const controller = new AbortController();
     const params = new URLSearchParams({ indicator, countries });
     if (range === "latest") params.set("latest", "true");
     else params.set("date", range);
-    setLoading(true);
-    setError("");
     fetch("/api/wdi?" + params.toString(), { signal: controller.signal })
       .then(async (response) => {
         const payload = (await response.json()) as ApiPayload;
         if (!response.ok) throw new Error(payload.error ?? "The data request failed.");
-        setRecords(payload.records ?? []);
+        setState({ key: requestKey, records: payload.records ?? [], loading: false, error: "" });
       })
       .catch((reason: unknown) => {
-        if (reason instanceof Error && reason.name !== "AbortError") setError(reason.message);
-      })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+        if (reason instanceof Error && reason.name !== "AbortError") {
+          setState({ key: requestKey, records: [], loading: false, error: reason.message });
+        }
+      });
     return () => controller.abort();
-  }, [indicator, countries, range]);
-  return { records, loading, error };
+  }, [indicator, countries, range, requestKey]);
+  const matchesRequest = state.key === requestKey;
+  return {
+    records: matchesRequest ? state.records : [],
+    loading: !matchesRequest || state.loading,
+    error: matchesRequest ? state.error : ""
+  };
 }
-
 function SelectControl({ label, value, onChange, children }: { label: string; value: string; onChange: (value: string) => void; children: ReactNode }) {
   return <label className="select-wrap"><span>{label}</span><span className="select-control"><select value={value} onChange={(event) => onChange(event.target.value)}>{children}</select><ChevronDown size={14}/></span></label>;
 }
@@ -378,33 +385,49 @@ function Methodology() {
   </>;
 }
 
+function hasCookieConsent() {
+  if (typeof document === "undefined") return false;
+  return document.cookie.split("; ").some((item) => item.startsWith("gdp_atlas_consent="));
+}
+
+function getCookieBannerSnapshot() {
+  return !hasCookieConsent();
+}
+
+function subscribeCookieBanner(callback: () => void) {
+  if (typeof window === "undefined") return () => {};
+  window.addEventListener("gdp-cookie-consent", callback);
+  return () => window.removeEventListener("gdp-cookie-consent", callback);
+}
+
 function CookieConsent() {
-  const [visible, setVisible] = useState(false);
+  const visible = useSyncExternalStore(subscribeCookieBanner, getCookieBannerSnapshot, () => false);
   const [settings, setSettings] = useState(false);
   const [analytics, setAnalytics] = useState(false);
-  useEffect(() => {
-    setVisible(!document.cookie.split("; ").some((item) => item.startsWith("gdp_atlas_consent=")));
-  }, []);
   const save = (allowAnalytics: boolean) => {
     const value = encodeURIComponent(JSON.stringify({ essential: true, analytics: allowAnalytics, savedAt: new Date().toISOString() }));
     const secure = window.location.protocol === "https:" ? "; Secure" : "";
     document.cookie = "gdp_atlas_consent=" + value + "; Max-Age=31536000; Path=/; SameSite=Lax" + secure;
-    setVisible(false);
+    window.dispatchEvent(new Event("gdp-cookie-consent"));
   };
   if (!visible) return null;
   return <div className="cookie-wrap" role="dialog" aria-modal="true" aria-labelledby="cookie-title">
-    <div className="cookie-card"><button className="cookie-close" onClick={() => save(false)} aria-label="Close cookie notice"><X size={16}/></button>
-      <div className="eyebrow">YOUR PREFERENCES</div><h2 id="cookie-title">A note about cookies</h2>
+    <div className="cookie-card">
+      <button className="cookie-close" onClick={() => save(false)} aria-label="Close cookie notice"><X size={16}/></button>
+      <div className="eyebrow">YOUR PREFERENCES</div>
+      <h2 id="cookie-title">A note about cookies</h2>
       <p>One essential cookie remembers this choice. Optional analytics are off and no advertising trackers are included in this release.</p>
       {settings && <div className="cookie-settings">
         <div className="cookie-setting-row"><div><strong>Essential preferences</strong><span>Stores your consent choice. Always on.</span></div><em>Always on</em></div>
         <label className="cookie-setting-row"><div><strong>Optional analytics</strong><span>No analytics provider is connected in this release.</span></div><input type="checkbox" checked={analytics} onChange={(event) => setAnalytics(event.target.checked)}/></label>
       </div>}
-      <div className="cookie-actions"><button className="button button-muted" onClick={() => save(false)}>Essential only</button>{settings ? <button className="button button-primary" onClick={() => save(analytics)}>Save preferences</button> : <button className="button button-muted" onClick={() => setSettings(true)}>Preferences</button>}</div>
+      <div className="cookie-actions">
+        <button className="button button-muted" onClick={() => save(false)}>Essential only</button>
+        {settings ? <button className="button button-primary" onClick={() => save(analytics)}>Save preferences</button> : <button className="button button-muted" onClick={() => setSettings(true)}>Preferences</button>}
+      </div>
     </div>
   </div>;
 }
-
 export default function Dashboard() {
   const [active, setActive] = useState<ModuleId>("overview");
   const [mobileOpen, setMobileOpen] = useState(false);
