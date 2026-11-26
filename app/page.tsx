@@ -529,7 +529,7 @@ export default function Home() {
                   <div>
                     <span className="freshness-label">WORLD BANK · REPORTED GDP</span>
                     <strong>{data.worldBankLastUpdated || "Update date not supplied"}</strong>
-                    <small>{data.worldBankStatus === "live" ? "Live source connected" : "Using a clearly flagged local fallback"} · Latest reported observation year: {data.lastYear}</small>
+                    <small>{data.worldBankStatus === "live" ? "Live source connected" : "Using a clearly flagged local fallback"} · Most recent year in the source extract: {data.lastYear}</small>
                   </div>
                   <div>
                     <span className="freshness-label">IMF · OUTLOOK</span>
@@ -539,7 +539,7 @@ export default function Home() {
                   <div>
                     <span className="freshness-label">THIS DASHBOARD</span>
                     <strong>{new Date(data.checkedAt || data.updatedAt).toLocaleString("en-KE", { dateStyle: "medium", timeStyle: "short" })}</strong>
-                    <small>Last successful check of the official source feeds</small>
+                    <small>Last refresh processed by this dashboard</small>
                   </div>
                 </div>
               </section>
