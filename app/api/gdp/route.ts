@@ -4,6 +4,7 @@ import { parse } from "csv-parse/sync";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+export const maxDuration = 60;
 
 type JsonRecord = Record<string, any>;
 type Observation = {
@@ -146,21 +147,25 @@ export async function GET(request: Request) {
   let worldBankStatus: "live" | "fallback" = "live";
   let worldBankLastUpdated: string | null = null;
 
-  try {
-    const liveWorldBank = await fetchWorldBankSeries(forceRefresh);
-    series = liveWorldBank.rows;
-    worldBankLastUpdated = liveWorldBank.lastUpdated;
-  } catch (error) {
-    worldBankStatus = "fallback";
-    warnings.push(error instanceof Error ? error.message : "World Bank data could not be reached.");
-    series = await readBundledFallback();
-  }
+  const worldBankPromise = fetchWorldBankSeries(forceRefresh)
+    .then((liveWorldBank) => {
+      series = liveWorldBank.rows;
+      worldBankLastUpdated = liveWorldBank.lastUpdated;
+    })
+    .catch(async (error) => {
+      worldBankStatus = "fallback";
+      warnings.push(error instanceof Error ? error.message : "World Bank data could not be reached.");
+      series = await readBundledFallback();
+    });
 
-  const [imfGdpResult, imfGrowthResult, imfCountriesResult] = await Promise.allSettled([
+  const imfPromise = Promise.allSettled([
     getJson(`${IMF_BASE}/NGDPD`, forceRefresh),
     getJson(`${IMF_BASE}/NGDP_RPCH`, forceRefresh),
     getJson(`${IMF_BASE}/countries`, forceRefresh),
   ]);
+
+  const [, imfResults] = await Promise.all([worldBankPromise, imfPromise]);
+  const [imfGdpResult, imfGrowthResult, imfCountriesResult] = imfResults;
 
   let outlook: Observation[] = [];
   let imfEdition = "Latest IMF World Economic Outlook vintage";
