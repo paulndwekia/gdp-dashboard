@@ -30,11 +30,19 @@ const KNOWN_AGGREGATE_CODES = new Set([
 ]);
 
 async function getJson(url: string, forceRefresh: boolean, revalidate = REFRESH_SECONDS, timeoutMs = 20000) {
+  // IMF's DataMapper edge rejects Node/Undici's default User-Agent from some
+  // cloud regions. A normal browser-style UA and JSON Accept header are used
+  // consistently for public read-only source requests.
+  const headers = {
+    "Accept": "application/json, text/plain, */*",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Referer": "https://www.imf.org/external/datamapper/",
+  };
   const response = await fetch(
     url,
     forceRefresh
-      ? { cache: "no-store", signal: AbortSignal.timeout(timeoutMs) }
-      : { next: { revalidate }, signal: AbortSignal.timeout(timeoutMs) }
+      ? { cache: "no-store", headers, signal: AbortSignal.timeout(timeoutMs) }
+      : { next: { revalidate }, headers, signal: AbortSignal.timeout(timeoutMs) }
   );
   if (!response.ok) {
     throw new Error(`Source request failed (${response.status}): ${url}`);
