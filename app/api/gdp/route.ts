@@ -19,12 +19,12 @@ const WORLD_BANK_INDICATOR = "NY.GDP.MKTP.CD";
 const IMF_BASE = "https://www.imf.org/external/datamapper/api/v2";
 const REFRESH_SECONDS = 6 * 60 * 60;
 
-async function getJson(url: string, forceRefresh: boolean, revalidate = REFRESH_SECONDS) {
+async function getJson(url: string, forceRefresh: boolean, revalidate = REFRESH_SECONDS, timeoutMs = 20000) {
   const response = await fetch(
     url,
     forceRefresh
-      ? { cache: "no-store", signal: AbortSignal.timeout(20000) }
-      : { next: { revalidate }, signal: AbortSignal.timeout(20000) }
+      ? { cache: "no-store", signal: AbortSignal.timeout(timeoutMs) }
+      : { next: { revalidate }, signal: AbortSignal.timeout(timeoutMs) }
   );
   if (!response.ok) {
     throw new Error(`Source request failed (${response.status}): ${url}`);
@@ -172,10 +172,15 @@ export async function GET(request: Request) {
       series = await readBundledFallback();
     });
 
+  // The Outlook panel only uses the latest estimate and forward projection years.
+  // Requesting just this compact window reduces cold-start payload size and provider latency.
+  const currentYear = new Date().getUTCFullYear();
+  const imfPeriods = Array.from({ length: 7 }, (_, index) => currentYear - 1 + index).join(",");
+  const imfPeriodQuery = `?periods=${encodeURIComponent(imfPeriods)}`;
   const imfPromise = Promise.allSettled([
-    getJson(`${IMF_BASE}/NGDPD`, forceRefresh),
-    getJson(`${IMF_BASE}/NGDP_RPCH`, forceRefresh),
-    getJson(`${IMF_BASE}/countries`, forceRefresh),
+    getJson(`${IMF_BASE}/NGDPD${imfPeriodQuery}`, forceRefresh, REFRESH_SECONDS, 30000),
+    getJson(`${IMF_BASE}/NGDP_RPCH${imfPeriodQuery}`, forceRefresh, REFRESH_SECONDS, 30000),
+    getJson(`${IMF_BASE}/countries`, forceRefresh, 86400, 30000),
   ]);
 
   const [, imfResults] = await Promise.all([worldBankPromise, imfPromise]);
