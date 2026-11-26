@@ -334,7 +334,7 @@ function DataExplorer({ countries }: { countries: Country[] }) {
   const [from, setFrom] = useState("2000");
   const [to, setTo] = useState("2025");
   const data = useWdi(indicator, selected.join(";"), from + ":" + to);
-  const toggle = (code: string) => setSelected((current) => current.includes(code) ? current.filter((item) => item !== code) : current.length < 6 ? [...current, code] : current);
+  const toggle = (code: string) => setSelected((current) => current.includes(code) ? (current.length > 1 ? current.filter((item) => item !== code) : current) : current.length < 6 ? [...current, code] : current);
   const invalidRange = Number(from) > Number(to);
   return <>
     <div className="page-intro"><div><div className="eyebrow">CUSTOM DATASET</div><h1>Data explorer.</h1><p>Build a dataset, inspect the source observations and export the underlying values.</p></div><DownloadButton records={invalidRange ? [] : data.records} indicator={indicator}/></div>

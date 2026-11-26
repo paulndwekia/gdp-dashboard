@@ -54,7 +54,7 @@ a { color: inherit; text-decoration: none; }
 .topbar-right { display: flex; align-items: center; gap: 21px; }
 .source-pill { display: flex; align-items: center; gap: 7px; border: 1px solid #e3ebed; border-radius: 30px; padding: 6px 9px; color: #55747e; font-size: 8px; letter-spacing: .65px; font-weight: 760; }
 .source-pill i { width: 5px; height: 5px; box-shadow: none; }
-.topbar-link { color: #60798c; font-size: 10px; }
+.topbar-link { color: #60798c; font-size: 10px; background: transparent; border: 0; padding: 0; cursor: pointer; }
 .topbar-link:hover, .site-footer a:hover { color: var(--teal); }
 .mobile-menu { display: none; border: 0; color: var(--navy); background: transparent; padding: 5px; }
 .page-content { max-width: 1500px; padding: 34px 38px 24px; margin: 0 auto; }
