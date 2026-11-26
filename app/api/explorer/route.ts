@@ -131,6 +131,10 @@ export async function GET(request: Request) {
     if (!/^[A-Z]{3}$/.test(country)) {
       return Response.json({ error: "Choose a valid three-letter country code." }, { status: 400 });
     }
+    const knownCountries = await getCountryCatalog().catch(() => null);
+    if (knownCountries && !knownCountries.some((item) => item.code === country)) {
+      return Response.json({ error: "That country code is not in the World Bank country list. Choose a country from the selector." }, { status: 400 });
+    }
     if (!Number.isInteger(startYear) || !Number.isInteger(endYear) ||
         startYear < 1900 || endYear > YEARS_MAX || startYear > endYear) {
       return Response.json({ error: "Choose a valid year range." }, { status: 400 });
