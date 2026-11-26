@@ -1,0 +1,38 @@
+name: GDP Atlas checks
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, "rebuild/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gdp-atlas-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install
+      - name: Dependency audit summary
+        run: |
+          npm audit --json > audit-report.json || true
+          node -e "const a=require('./audit-report.json'); console.log('Dependency vulnerabilities:', JSON.stringify(a.metadata?.vulnerabilities ?? {})); for (const [name, item] of Object.entries(a.vulnerabilities ?? {})) console.log(name + ': ' + item.severity + ', fix available: ' + JSON.stringify(item.fixAvailable));"
+      - name: Type check
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Build
+        run: npm run build
