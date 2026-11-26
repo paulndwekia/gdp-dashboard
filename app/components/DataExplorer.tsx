@@ -38,11 +38,34 @@ type ExplorerResponse = {
 
 const POPULAR = ["GDP per capita", "Inflation", "Unemployment", "Population", "Exports", "Government debt"];
 
+function unitKind(indicator: IndicatorResult | null): "percent" | "usd" | "number" {
+  const sourceUnit = (indicator?.unit || "").toLowerCase();
+  const title = (indicator?.name || "").toLowerCase();
+  if (sourceUnit.includes("percent") || sourceUnit.includes("%") ||
+      /\bannual\s*%|\bpercent\b|\(%\s*of|\b%\s*of\s*(gdp|total|population|labou?r force|employment)/i.test(title)) {
+    return "percent";
+  }
+  if (sourceUnit.includes("us dollar") || sourceUnit.includes("current us") ||
+      /\bus\$|u\.s\.\s*dollars?/i.test(title)) {
+    return "usd";
+  }
+  return "number";
+}
+
+function displayUnit(indicator: IndicatorResult | null) {
+  const sourceUnit = indicator?.unit?.trim();
+  if (sourceUnit) return sourceUnit;
+  const kind = unitKind(indicator);
+  if (kind === "percent") return "Percent (inferred from indicator title)";
+  if (kind === "usd") return "US dollars (inferred from indicator title)";
+  return "Unit not supplied by source";
+}
+
 function formatValue(value: number, indicator: IndicatorResult | null) {
   if (!Number.isFinite(value)) return "—";
-  const unit = (indicator?.unit || "").toLowerCase();
-  if (unit.includes("percent") || unit.includes("%")) return value.toFixed(2) + "%";
-  if (unit.includes("current us") || unit.includes("constant us") || unit.includes("us dollar")) {
+  const kind = unitKind(indicator);
+  if (kind === "percent") return value.toFixed(2) + "%";
+  if (kind === "usd") {
     if (Math.abs(value) >= 1e12) return "$" + (value / 1e12).toFixed(2) + "T";
     if (Math.abs(value) >= 1e9) return "$" + (value / 1e9).toFixed(1) + "B";
     if (Math.abs(value) >= 1e6) return "$" + (value / 1e6).toFixed(1) + "M";
@@ -52,11 +75,13 @@ function formatValue(value: number, indicator: IndicatorResult | null) {
 }
 
 function tickValue(value: number, indicator: IndicatorResult | null) {
-  const unit = (indicator?.unit || "").toLowerCase();
-  if (unit.includes("percent") || unit.includes("%")) return value.toFixed(0) + "%";
-  if (unit.includes("us dollar")) {
+  const kind = unitKind(indicator);
+  if (kind === "percent") return value.toFixed(0) + "%";
+  if (kind === "usd") {
     if (Math.abs(value) >= 1e12) return "$" + (value / 1e12).toFixed(0) + "T";
     if (Math.abs(value) >= 1e9) return "$" + (value / 1e9).toFixed(0) + "B";
+    if (Math.abs(value) >= 1e6) return "$" + (value / 1e6).toFixed(0) + "M";
+    return "$" + value.toLocaleString("en-US");
   }
   if (Math.abs(value) >= 1e9) return (value / 1e9).toFixed(0) + "B";
   if (Math.abs(value) >= 1e6) return (value / 1e6).toFixed(0) + "M";
@@ -94,8 +119,7 @@ export default function DataExplorer() {
   const yearOnYearDifference = latest && previous && latest.year - previous.year === 1
     ? latest.value - previous.value
     : null;
-  const unit = (selected?.unit || "").toLowerCase();
-  const isPercentMeasure = unit.includes("percent") || unit.includes("%");
+  const isPercentMeasure = unitKind(selected) === "percent";
   const changeLabel = isPercentMeasure ? "CHANGE FROM PRIOR YEAR" : "DIFFERENCE FROM PRIOR YEAR";
   const changeValue = yearOnYearDifference === null
     ? "—"
@@ -229,7 +253,7 @@ export default function DataExplorer() {
       ["Source", selected.source],
       ["Country", selectedCountryName],
       ["Country code", country],
-      ["Unit", selected.unit],
+      ["Unit", displayUnit(selected)],
       ["Source last updated", sourceUpdated || ""],
       ["Retrieved at", retrievedAt],
       [],
@@ -281,7 +305,7 @@ export default function DataExplorer() {
               onClick={() => void loadIndicator(item)}
             >
               <span className="indicator-result-title">{item.name}</span>
-              <span className="indicator-result-meta">{item.id} · {item.unit || "Unit defined by source"}</span>
+              <span className="indicator-result-meta">{item.id} · {item.unit || (unitKind(item) === "percent" ? "Percent" : unitKind(item) === "usd" ? "US dollars" : "Unit not supplied")}</span>
               <span className="indicator-result-source">{item.topics.slice(0, 2).join(" · ") || item.source}</span>
             </button>
           ))}
@@ -315,7 +339,7 @@ export default function DataExplorer() {
               <select
                 value={String(startYear)}
                 disabled={!years.length || loadingSeries}
-                onChange={(event) => setStartYear(Number(event.target.value))}
+                onChange={(event) => { const nextStart = Number(event.target.value); setStartYear(nextStart); if (nextStart > endYear) setEndYear(nextStart); }}
               >
                 {years.map((year) => <option key={year} value={year}>{year}</option>)}
               </select>
@@ -335,7 +359,7 @@ export default function DataExplorer() {
         {selected && !loadingSeries && filtered.length > 0 && (
           <>
             <div className="explorer-metrics">
-              <div><span>LATEST VALUE</span><strong>{formatValue(latest?.value ?? NaN, selected)}</strong><small>{latest?.year ?? "—"} · {selected.unit || "source unit"}</small></div>
+              <div><span>LATEST VALUE</span><strong>{formatValue(latest?.value ?? NaN, selected)}</strong><small>{latest?.year ?? "—"} · {displayUnit(selected)}</small></div>
               <div><span>{changeLabel}</span><strong>{changeValue}</strong><small>{isPercentMeasure ? "Percentage-point difference from the prior consecutive year" : "Only calculated when consecutive observations exist"}</small></div>
               <div><span>OBSERVATIONS</span><strong>{filtered.length}</strong><small>{filtered[0]?.year} to {filtered[filtered.length - 1]?.year}</small></div>
             </div>
