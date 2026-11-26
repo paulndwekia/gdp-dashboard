@@ -1,0 +1,655 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+
+type Observation = {
+  code: string;
+  name: string;
+  year: number;
+  gdp: number;
+};
+
+type Dataset = {
+  source: string;
+  indicator: string;
+  unit: string;
+  firstYear: number;
+  lastYear: number;
+  series: Observation[];
+};
+
+type PageKey =
+  | "Overview"
+  | "Country profile"
+  | "Compare economies"
+  | "Regional monitor"
+  | "Growth analytics"
+  | "Rankings"
+  | "Forecast lab"
+  | "Methodology";
+
+const NAV: PageKey[] = [
+  "Overview",
+  "Country profile",
+  "Compare economies",
+  "Regional monitor",
+  "Growth analytics",
+  "Rankings",
+  "Forecast lab",
+  "Methodology",
+];
+
+const COLORS = ["#C7A66A", "#59A69B", "#7799C7", "#C98272", "#A99BCB", "#D0B77F", "#7FA8A0", "#C18D9D"];
+const AGGREGATES = new Set([
+  "AFE", "AFW", "ARB", "CEB", "CSS", "EAP", "EAS", "ECS", "EMU", "EUU",
+  "FCS", "HIC", "IBD", "IBT", "IDA", "IDB", "IDX", "LAC", "LCN", "LDC",
+  "LIC", "LMC", "LMY", "MEA", "MIC", "MNA", "NAC", "OED", "OSS", "PRE",
+  "PSS", "PST", "SAS", "SSA", "SSF", "SST", "TEA", "TEC", "TLA", "TMN",
+  "TSA", "TSS", "UMC", "WLD",
+]);
+const REGION_NAMES: Record<string, string> = {
+  AFE: "Africa Eastern & Southern",
+  AFW: "Africa Western & Central",
+  ARB: "Arab World",
+  EAS: "East Asia & Pacific",
+  ECS: "Europe & Central Asia",
+  LCN: "Latin America & Caribbean",
+  MEA: "Middle East & North Africa",
+  NAC: "North America",
+  SAS: "South Asia",
+  SSF: "Sub-Saharan Africa",
+  WLD: "World",
+};
+
+function money(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
+  const abs = Math.abs(value);
+  if (abs >= 1e12) return "$" + (value / 1e12).toFixed(2) + "T";
+  if (abs >= 1e9) return "$" + (value / 1e9).toFixed(1) + "B";
+  if (abs >= 1e6) return "$" + (value / 1e6).toFixed(1) + "M";
+  return "$" + Math.round(value).toLocaleString("en-US");
+}
+
+function percent(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
+  return (value > 0 ? "+" : "") + value.toFixed(2) + "%";
+}
+
+function pctChange(current: number, previous: number) {
+  return previous > 0 ? ((current / previous) - 1) * 100 : null;
+}
+
+function cagr(start: number, end: number, years: number) {
+  if (years <= 0 || start <= 0 || end <= 0) return null;
+  return (Math.pow(end / start, 1 / years) - 1) * 100;
+}
+
+function latestByCode(rows: Observation[]) {
+  const latest = new Map<string, Observation>();
+  for (const row of rows) {
+    const prior = latest.get(row.code);
+    if (!prior || row.year > prior.year) latest.set(row.code, row);
+  }
+  return Array.from(latest.values());
+}
+
+function tickMoney(value: number) {
+  if (Math.abs(value) >= 1e12) return "$" + (value / 1e12).toFixed(0) + "T";
+  if (Math.abs(value) >= 1e9) return "$" + (value / 1e9).toFixed(0) + "B";
+  if (Math.abs(value) >= 1e6) return "$" + (value / 1e6).toFixed(0) + "M";
+  return value.toLocaleString("en-US");
+}
+
+function AppChartTooltip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="chart-tooltip">
+      <div className="tooltip-year">{label}</div>
+      {payload.map((item: any, index: number) => (
+        <div className="tooltip-row" key={index}>
+          <span className="tooltip-dot" style={{ background: item.color || item.fill }} />
+          <span>{item.name || item.dataKey}</span>
+          <strong>{typeof item.value === "number" ? money(item.value) : item.value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SectionHeading({ eyebrow, title, description }: { eyebrow: string; title: string; description: string }) {
+  return (
+    <div className="section-heading">
+      <div className="eyebrow">{eyebrow}</div>
+      <h1>{title}</h1>
+      <p>{description}</p>
+    </div>
+  );
+}
+
+function Metric({ label, value, footnote, accent = "gold" }: { label: string; value: string; footnote: string; accent?: string }) {
+  return (
+    <div className="metric-card">
+      <div className="metric-label">{label}</div>
+      <div className="metric-value">{value}</div>
+      <div className={"metric-foot " + accent}>{footnote}</div>
+    </div>
+  );
+}
+
+export default function Home() {
+  const [data, setData] = useState<Dataset | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const [active, setActive] = useState<PageKey>("Overview");
+  const [country, setCountry] = useState("Kenya");
+  const [rangeStart, setRangeStart] = useState(2000);
+  const [rangeEnd, setRangeEnd] = useState(2022);
+  const [compareNames, setCompareNames] = useState<string[]>(["Kenya", "United States", "China", "India"]);
+  const [compareMode, setCompareMode] = useState<"level" | "index">("level");
+  const [regionCodes, setRegionCodes] = useState<string[]>(["AFE", "AFW", "EAS", "ECS", "LCN", "SAS"]);
+  const [rankMode, setRankMode] = useState<"size" | "change" | "cagr">("size");
+  const [rankYearStart, setRankYearStart] = useState(2012);
+  const [forecastRate, setForecastRate] = useState(5);
+  const [forecastYears, setForecastYears] = useState(5);
+
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/gdp")
+      .then((response) => {
+        if (!response.ok) throw new Error("Could not load the GDP dataset.");
+        return response.json();
+      })
+      .then((result: Dataset) => {
+        if (!alive) return;
+        setData(result);
+        const countryRows = result.series.filter((row) => !AGGREGATES.has(row.code));
+        const kenya = countryRows.some((row) => row.name === "Kenya");
+        const years = countryRows.map((row) => row.year);
+        setCountry(kenya ? "Kenya" : (countryRows[0]?.name || ""));
+        setRangeEnd(Math.max(...years));
+        setRangeStart(Math.max(Math.min(...years), Math.max(...years) - 22));
+        setRankYearStart(Math.max(Math.min(...years), Math.max(...years) - 10));
+      })
+      .catch((error) => {
+        if (alive) setLoadError(error instanceof Error ? error.message : "Dataset loading failed.");
+      });
+    return () => { alive = false; };
+  }, []);
+
+  const rows = data?.series || [];
+  const countryRows = useMemo(() => rows.filter((row) => !AGGREGATES.has(row.code)), [rows]);
+  const aggregateRows = useMemo(() => rows.filter((row) => AGGREGATES.has(row.code)), [rows]);
+  const countryNames = useMemo(
+    () => Array.from(new Set(countryRows.map((row) => row.name))).sort((a, b) => a.localeCompare(b)),
+    [countryRows]
+  );
+  const latestCountries = useMemo(() => latestByCode(countryRows), [countryRows]);
+  const worldRows = useMemo(
+    () => aggregateRows.filter((row) => row.code === "WLD").sort((a, b) => a.year - b.year),
+    [aggregateRows]
+  );
+  const latestWorld = worldRows[worldRows.length - 1];
+  const priorWorld = worldRows.length > 1 && worldRows[worldRows.length - 1].year - worldRows[worldRows.length - 2].year === 1
+    ? worldRows[worldRows.length - 2]
+    : null;
+  const worldChange = latestWorld && priorWorld ? pctChange(latestWorld.gdp, priorWorld.gdp) : null;
+  const worldStart = worldRows.find((row) => row.year >= (latestWorld?.year || 2022) - 10);
+  const worldCagr = latestWorld && worldStart
+    ? cagr(worldStart.gdp, latestWorld.gdp, latestWorld.year - worldStart.year)
+    : null;
+  const topEconomies = [...latestCountries].sort((a, b) => b.gdp - a.gdp).slice(0, 10);
+
+  const activeCountryRows = useMemo(
+    () => countryRows.filter((row) => row.name === country && row.year >= rangeStart && row.year <= rangeEnd).sort((a, b) => a.year - b.year),
+    [countryRows, country, rangeStart, rangeEnd]
+  );
+  const selectedCompareRows = useMemo(
+    () => countryRows.filter((row) => compareNames.includes(row.name)),
+    [countryRows, compareNames]
+  );
+  const indexedCompareRows = useMemo(() => {
+    if (compareMode === "level") return selectedCompareRows;
+    const firstByName = new Map<string, number>();
+    for (const row of selectedCompareRows) {
+      if (!firstByName.has(row.name)) firstByName.set(row.name, row.gdp);
+    }
+    return selectedCompareRows.map((row) => ({
+      ...row,
+      index: (row.gdp / (firstByName.get(row.name) || row.gdp)) * 100,
+    }));
+  }, [selectedCompareRows, compareMode]);
+  const regionRows = useMemo(
+    () => aggregateRows.filter((row) => regionCodes.includes(row.code)).map((row) => ({ ...row, name: REGION_NAMES[row.code] || row.name })),
+    [aggregateRows, regionCodes]
+  );
+
+  const growthRows = useMemo(() => {
+    const sorted = [...countryRows].sort((a, b) => a.code.localeCompare(b.code) || a.year - b.year);
+    const values: Array<{ name: string; code: string; year: number; change: number }> = [];
+    const last = new Map<string, Observation>();
+    for (const row of sorted) {
+      const previous = last.get(row.code);
+      if (previous && row.year - previous.year === 1) {
+        const change = pctChange(row.gdp, previous.gdp);
+        if (change !== null && Number.isFinite(change)) values.push({ name: row.name, code: row.code, year: row.year, change });
+      }
+      last.set(row.code, row);
+    }
+    return values;
+  }, [countryRows]);
+
+  const latestGrowth = useMemo(() => {
+    const last = new Map<string, { name: string; code: string; year: number; change: number }>();
+    for (const row of growthRows) {
+      const previous = last.get(row.code);
+      if (!previous || row.year > previous.year) last.set(row.code, row);
+    }
+    return Array.from(last.values());
+  }, [growthRows]);
+
+  const rankings = useMemo(() => {
+    if (rankMode === "size") return [...latestCountries].sort((a, b) => b.gdp - a.gdp).slice(0, 15).reverse()
+      .map((row) => ({ name: row.name, year: row.year, value: row.gdp, label: money(row.gdp) }));
+    if (rankMode === "change") return [...latestGrowth].sort((a, b) => b.change - a.change).slice(0, 15).reverse()
+      .map((row) => ({ name: row.name, year: row.year, value: row.change, label: percent(row.change) }));
+    const results: Array<{ name: string; year: number; value: number; label: string }> = [];
+    for (const name of countryNames) {
+      const series = countryRows.filter((row) => row.name === name && row.year >= rankYearStart).sort((a, b) => a.year - b.year);
+      if (series.length < 2) continue;
+      const first = series[0];
+      const last = series[series.length - 1];
+      const rate = cagr(first.gdp, last.gdp, last.year - first.year);
+      if (rate !== null) results.push({ name, year: last.year, value: rate, label: percent(rate) });
+    }
+    return results.sort((a, b) => b.value - a.value).slice(0, 15).reverse();
+  }, [rankMode, latestCountries, latestGrowth, countryNames, countryRows, rankYearStart]);
+
+  const yearMin = data?.firstYear || 1960;
+  const yearMax = data?.lastYear || 2022;
+  const profileLatest = activeCountryRows[activeCountryRows.length - 1];
+  const profilePrevious = activeCountryRows.length > 1 ? activeCountryRows[activeCountryRows.length - 2] : null;
+  const profileGrowth = profileLatest && profilePrevious && profileLatest.year - profilePrevious.year === 1
+    ? pctChange(profileLatest.gdp, profilePrevious.gdp)
+    : null;
+  const profileCagr = activeCountryRows.length > 1
+    ? cagr(activeCountryRows[0].gdp, activeCountryRows[activeCountryRows.length - 1].gdp,
+      activeCountryRows[activeCountryRows.length - 1].year - activeCountryRows[0].year)
+    : null;
+
+  function toggleCompare(name: string) {
+    setCompareNames((current) =>
+      current.includes(name)
+        ? current.filter((item) => item !== name)
+        : current.length < 8 ? [...current, name] : current
+    );
+  }
+
+  function toggleRegion(code: string) {
+    setRegionCodes((current) =>
+      current.includes(code) ? current.filter((item) => item !== code) : [...current, code]
+    );
+  }
+
+  const pageDescription: Record<PageKey, string> = {
+    "Overview": "A considered view of the global economy and the largest national economies.",
+    "Country profile": "Follow an economy's recorded GDP history and see how its nominal value has changed.",
+    "Compare economies": "Compare economic scale or align different economies to a common starting point.",
+    "Regional monitor": "Explore regional aggregates from the source dataset without mixing them into country rankings.",
+    "Growth analytics": "Study the distribution and latest recorded annual nominal changes across countries.",
+    "Rankings": "Rank national economies using transparent measures and their own latest available observations.",
+    "Forecast lab": "Build simple, assumption-led scenarios from the last recorded GDP observation.",
+    "Methodology": "Review the source, coverage, definitions and limits behind every calculation.",
+  };
+
+  if (loadError) {
+    return <main className="loading-shell"><div className="eyebrow">GDP Research</div><h1>Dataset unavailable</h1><p>{loadError}</p></main>;
+  }
+  if (!data) {
+    return <main className="loading-shell"><div className="brand-mark">GR</div><div className="eyebrow">Independent economic research</div><h1>GDP Research</h1><p>Preparing the historical dataset…</p><div className="loading-line" /></main>;
+  }
+
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-mark">GR</div>
+          <div>
+            <div className="brand-title">GDP Research</div>
+            <div className="brand-subtitle">Global economic monitor</div>
+          </div>
+        </div>
+        <div className="nav-caption">RESEARCH WORKSPACE</div>
+        <nav className="nav-list" aria-label="Main navigation">
+          {NAV.map((item) => (
+            <button key={item} onClick={() => setActive(item)} className={"nav-item" + (active === item ? " active" : "")}>
+              <span className="nav-indicator" />
+              <span>{item}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="sidebar-foot">
+          <div className="source-line">SOURCE</div>
+          <div>World Bank Open Data</div>
+          <div className="sidebar-range">{data.firstYear} — {data.lastYear}</div>
+          <div className="sidebar-separation">Independent project · Separate data</div>
+        </div>
+      </aside>
+
+      <main className="main-area">
+        <header className="topbar">
+          <div className="breadcrumb">RESEARCH <span>/</span> {active.toUpperCase()}</div>
+          <div className="topbar-right">
+            <span className="status-dot" />
+            <span>Historical dataset</span>
+            <span className="topbar-divider" />
+            <span>Current US$</span>
+          </div>
+        </header>
+
+        <div className="content-area">
+          <div className="section-heading">
+            <div className="eyebrow">GDP RESEARCH / {String(NAV.indexOf(active) + 1).padStart(2, "0")}</div>
+            <h1>{active === "Overview" ? "The global economy, in numbers" : active}</h1>
+            <p>{pageDescription[active]}</p>
+          </div>
+
+          {active === "Overview" && (
+            <>
+              <div className="metric-grid">
+                <Metric label="WORLD GDP · LATEST" value={money(latestWorld?.gdp)} footnote={"Recorded in " + (latestWorld?.year || "—")} />
+                <Metric label="ANNUAL NOMINAL CHANGE" value={percent(worldChange)} footnote="Latest consecutive years" accent="teal" />
+                <Metric label="10-YEAR NOMINAL CAGR" value={percent(worldCagr)} footnote="Approximate historical pace" accent="blue" />
+                <Metric label="COUNTRY SERIES" value={String(latestCountries.length)} footnote="Excludes source aggregates" accent="muted" />
+              </div>
+
+              <div className="chart-grid overview-grid">
+                <section className="panel panel-large">
+                  <div className="panel-header">
+                    <div><div className="panel-kicker">GLOBAL OUTPUT</div><h2>World GDP over time</h2></div>
+                    <span className="panel-unit">CURRENT US$</span>
+                  </div>
+                  <div className="chart-wrap tall">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={worldRows}>
+                        <defs><linearGradient id="worldFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#C7A66A" stopOpacity={0.22} /><stop offset="100%" stopColor="#C7A66A" stopOpacity={0.01} /></linearGradient></defs>
+                        <CartesianGrid stroke="#27364A" vertical={false} />
+                        <XAxis dataKey="year" tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={35} />
+                        <YAxis tickFormatter={tickMoney} tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} width={65} />
+                        <Tooltip content={<AppChartTooltip />} />
+                        <Area type="monotone" dataKey="gdp" name="World GDP" stroke="#C7A66A" strokeWidth={2.3} fill="url(#worldFill)" activeDot={{ r: 4, fill: "#C7A66A" }} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="chart-note">World aggregate series · nominal values in current US dollars</div>
+                </section>
+
+                <section className="panel">
+                  <div className="panel-header">
+                    <div><div className="panel-kicker">ECONOMIC SCALE</div><h2>Largest economies</h2></div>
+                    <span className="panel-unit">LATEST AVAILABLE</span>
+                  </div>
+                  <div className="chart-wrap tall">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={[...topEconomies].reverse()} layout="vertical" margin={{ left: 4, right: 12, top: 4, bottom: 4 }}>
+                        <CartesianGrid stroke="#27364A" horizontal={false} />
+                        <XAxis type="number" tickFormatter={tickMoney} tick={{ fill: "#8D9CAF", fontSize: 10 }} tickLine={false} axisLine={false} />
+                        <YAxis type="category" dataKey="name" width={110} tick={{ fill: "#C3CCD7", fontSize: 11 }} tickLine={false} axisLine={false} />
+                        <Tooltip content={<AppChartTooltip />} />
+                        <Bar dataKey="gdp" name="GDP" fill="#59A69B" barSize={13} radius={[0, 2, 2, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="chart-note">Each economy uses its latest non-missing year.</div>
+                </section>
+              </div>
+
+              <section className="panel">
+                <div className="panel-header panel-header-wrap">
+                  <div><div className="panel-kicker">COUNTRY COMPARISON</div><h2>How major economies have evolved</h2></div>
+                  <div className="inline-select"><label htmlFor="overview-countries">Select economies</label>
+                    <select id="overview-countries" multiple value={compareNames} onChange={(event) => setCompareNames(Array.from(event.target.selectedOptions, (option) => option.value))}>
+                      {countryNames.map((name) => <option key={name} value={name}>{name}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div className="chart-wrap medium">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={mergeSeries(selectedCompareRows)}>
+                      <CartesianGrid stroke="#27364A" vertical={false} />
+                      <XAxis dataKey="year" tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} />
+                      <YAxis tickFormatter={tickMoney} tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} width={65} />
+                      <Tooltip content={<AppChartTooltip />} />
+                      <Legend wrapperStyle={{ color: "#AAB7C7", fontSize: 11 }} />
+                      {compareNames.map((name, index) => <Line key={name} dataKey={name} name={name} type="monotone" stroke={COLORS[index % COLORS.length]} strokeWidth={2} dot={false} connectNulls={false} />)}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="chart-note">Select several countries to compare their recorded nominal GDP paths.</div>
+              </section>
+              <div className="method-strip"><strong>Interpretation</strong><span>Current-US-dollar GDP includes price and exchange-rate effects. It is not the same as inflation-adjusted real GDP.</span></div>
+            </>
+          )}
+
+          {active === "Country profile" && (
+            <>
+              <section className="panel filter-panel">
+                <div className="filter-field"><label htmlFor="profile-country">ECONOMY</label><select id="profile-country" value={country} onChange={(event) => setCountry(event.target.value)}>{countryNames.map((name) => <option key={name}>{name}</option>)}</select></div>
+                <div className="filter-field"><label htmlFor="profile-start">FROM YEAR · {rangeStart}</label><input id="profile-start" type="range" min={yearMin} max={rangeEnd} value={rangeStart} onChange={(event) => setRangeStart(Math.min(Number(event.target.value), rangeEnd))} /></div>
+                <div className="filter-field"><label htmlFor="profile-end">TO YEAR · {rangeEnd}</label><input id="profile-end" type="range" min={rangeStart} max={yearMax} value={rangeEnd} onChange={(event) => setRangeEnd(Math.max(Number(event.target.value), rangeStart))} /></div>
+              </section>
+              <div className="metric-grid three">
+                <Metric label="GDP · SELECTED END YEAR" value={money(profileLatest?.gdp)} footnote={profileLatest ? String(profileLatest.year) : "No observation"} />
+                <Metric label="LATEST ANNUAL NOMINAL CHANGE" value={percent(profileGrowth)} footnote="Requires consecutive years" accent="teal" />
+                <Metric label="PERIOD NOMINAL CAGR" value={percent(profileCagr)} footnote={activeCountryRows.length ? activeCountryRows[0].year + " to " + activeCountryRows[activeCountryRows.length - 1].year : "Insufficient observations"} accent="blue" />
+              </div>
+              <section className="panel">
+                <div className="panel-header"><div><div className="panel-kicker">HISTORICAL SERIES</div><h2>{country} · GDP path</h2></div><span className="panel-unit">CURRENT US$</span></div>
+                <div className="chart-wrap tall">
+                  <ResponsiveContainer width="100%" height="100%"><AreaChart data={activeCountryRows}>
+                    <defs><linearGradient id="profileFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#59A69B" stopOpacity={0.2} /><stop offset="100%" stopColor="#59A69B" stopOpacity={0.01} /></linearGradient></defs>
+                    <CartesianGrid stroke="#27364A" vertical={false} /><XAxis dataKey="year" tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} /><YAxis tickFormatter={tickMoney} tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} width={70} /><Tooltip content={<AppChartTooltip />} />
+                    <Area dataKey="gdp" name="GDP" type="monotone" stroke="#59A69B" strokeWidth={2.3} fill="url(#profileFill)" />
+                  </AreaChart></ResponsiveContainer>
+                </div>
+              </section>
+              <section className="panel">
+                <div className="panel-header"><div><div className="panel-kicker">OBSERVATION HISTORY</div><h2>Recorded values</h2></div><span className="panel-unit">{activeCountryRows.length} OBSERVATIONS</span></div>
+                <div className="table-wrap"><table><thead><tr><th>YEAR</th><th>GDP · CURRENT US$</th><th>ANNUAL NOMINAL CHANGE</th></tr></thead><tbody>
+                  {activeCountryRows.slice().reverse().map((row, index, list) => {
+                    const previous = index + 1 < list.length ? list[index + 1] : null;
+                    const change = previous && row.year - previous.year === 1 ? pctChange(row.gdp, previous.gdp) : null;
+                    return <tr key={row.year}><td>{row.year}</td><td>{money(row.gdp)}</td><td>{percent(change)}</td></tr>;
+                  })}
+                </tbody></table></div>
+              </section>
+            </>
+          )}
+
+          {active === "Compare economies" && (
+            <>
+              <section className="panel">
+                <div className="panel-header panel-header-wrap"><div><div className="panel-kicker">COMPARISON SET</div><h2>Choose economies</h2></div><span className="panel-unit">{compareNames.length} SELECTED · UP TO 8</span></div>
+                <div className="choice-list">{countryNames.map((name) => <label className="choice" key={name}><input type="checkbox" checked={compareNames.includes(name)} onChange={() => toggleCompare(name)} /><span>{name}</span></label>)}</div>
+                <div className="segmented"><button className={compareMode === "level" ? "selected" : ""} onClick={() => setCompareMode("level")}>GDP level</button><button className={compareMode === "index" ? "selected" : ""} onClick={() => setCompareMode("index")}>Indexed · start = 100</button></div>
+              </section>
+              <section className="panel">
+                <div className="panel-header"><div><div className="panel-kicker">TIME SERIES COMPARISON</div><h2>{compareMode === "level" ? "Nominal GDP levels" : "Relative GDP paths"}</h2></div><span className="panel-unit">{compareMode === "level" ? "CURRENT US$" : "INDEX POINTS"}</span></div>
+                <div className="chart-wrap tall"><ResponsiveContainer width="100%" height="100%">
+                  {compareMode === "level" ? <LineChart data={mergeSeries(selectedCompareRows)}><CartesianGrid stroke="#27364A" vertical={false} /><XAxis dataKey="year" tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} /><YAxis tickFormatter={tickMoney} tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} width={65} /><Tooltip content={<AppChartTooltip />} /><Legend wrapperStyle={{ color: "#AAB7C7", fontSize: 11 }} />{compareNames.map((name, index) => <Line key={name} dataKey={name} name={name} stroke={COLORS[index % COLORS.length]} strokeWidth={2} dot={false} />)}</LineChart> :
+                  <LineChart data={mergeIndexed(indexedCompareRows)}><CartesianGrid stroke="#27364A" vertical={false} /><XAxis dataKey="year" tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} /><YAxis tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} /><ReferenceLine y={100} stroke="#91A0B2" strokeDasharray="4 4" /><Tooltip /><Legend wrapperStyle={{ color: "#AAB7C7", fontSize: 11 }} />{compareNames.map((name, index) => <Line key={name} dataKey={name} name={name} stroke={COLORS[index % COLORS.length]} strokeWidth={2} dot={false} />)}</LineChart>}
+                </ResponsiveContainer></div>
+                <p className="chart-note">Each indexed country starts at its first available observation. The indexed view compares the pace of change, not absolute GDP size.</p>
+              </section>
+            </>
+          )}
+
+          {active === "Regional monitor" && (
+            <>
+              <section className="panel">
+                <div className="panel-header"><div><div className="panel-kicker">REGIONAL SERIES</div><h2>Select regions</h2></div><span className="panel-unit">SOURCE AGGREGATES</span></div>
+                <div className="region-grid">{Object.entries(REGION_NAMES).filter(([code]) => code !== "WLD").map(([code, name]) => <label className="choice" key={code}><input type="checkbox" checked={regionCodes.includes(code)} onChange={() => toggleRegion(code)} /><span>{name}</span></label>)}</div>
+              </section>
+              <section className="panel">
+                <div className="panel-header"><div><div className="panel-kicker">REGIONAL ECONOMIC SCALE</div><h2>GDP by region</h2></div><span className="panel-unit">CURRENT US$</span></div>
+                <div className="chart-wrap tall"><ResponsiveContainer width="100%" height="100%"><LineChart data={mergeSeries(regionRows)}>
+                  <CartesianGrid stroke="#27364A" vertical={false} /><XAxis dataKey="year" tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} /><YAxis tickFormatter={tickMoney} tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} width={65} /><Tooltip content={<AppChartTooltip />} /><Legend wrapperStyle={{ color: "#AAB7C7", fontSize: 11 }} />{Array.from(new Set(regionRows.map((row) => row.name))).map((name, index) => <Line key={name} dataKey={name} name={name} stroke={COLORS[index % COLORS.length]} strokeWidth={2} dot={false} />)}
+                </LineChart></ResponsiveContainer></div>
+                <p className="chart-note">These regional aggregates are provided by the source. They are not calculated by adding the individual country observations displayed here.</p>
+              </section>
+            </>
+          )}
+
+          {active === "Growth analytics" && (
+            <>
+              <div className="metric-grid three">
+                <Metric label="COUNTRY-YEAR OBSERVATIONS" value={growthRows.length.toLocaleString("en-US")} footnote="Consecutive years only" />
+                <Metric label="MEDIAN NOMINAL CHANGE" value={percent(median(growthRows.map((row) => row.change)))} footnote="Across available observations" accent="teal" />
+                <Metric label="NEGATIVE CHANGES" value={growthRows.length ? ((growthRows.filter((row) => row.change < 0).length / growthRows.length) * 100).toFixed(1) + "%" : "—"} footnote="Share of country-year observations" accent="blue" />
+              </div>
+              <div className="chart-grid">
+                <section className="panel">
+                  <div className="panel-header"><div><div className="panel-kicker">DISTRIBUTION</div><h2>Annual nominal change</h2></div><span className="panel-unit">COUNTRY-YEAR · %</span></div>
+                  <div className="chart-wrap medium"><ResponsiveContainer width="100%" height="100%"><BarChart data={growthHistogram(growthRows.map((row) => row.change))}><CartesianGrid stroke="#27364A" vertical={false} /><XAxis dataKey="bin" tick={{ fill: "#8D9CAF", fontSize: 10 }} tickLine={false} axisLine={false} /><YAxis tick={{ fill: "#8D9CAF", fontSize: 10 }} tickLine={false} axisLine={false} /><Tooltip /><ReferenceLine x="0–10%" stroke="#C7A66A" strokeDasharray="3 3" /><Bar dataKey="count" fill="#7799C7" radius={[2, 2, 0, 0]} /></BarChart></ResponsiveContainer></div>
+                  <p className="chart-note">Values beyond the displayed range are grouped into the outer bins so the central distribution remains readable.</p>
+                </section>
+                <section className="panel">
+                  <div className="panel-header"><div><div className="panel-kicker">YEARLY MEDIAN</div><h2>Nominal change through time</h2></div><span className="panel-unit">MEDIAN · %</span></div>
+                  <div className="chart-wrap medium"><ResponsiveContainer width="100%" height="100%"><LineChart data={yearlyMedian(growthRows)}><CartesianGrid stroke="#27364A" vertical={false} /><XAxis dataKey="year" tick={{ fill: "#8D9CAF", fontSize: 10 }} tickLine={false} axisLine={false} /><YAxis tick={{ fill: "#8D9CAF", fontSize: 10 }} tickLine={false} axisLine={false} /><ReferenceLine y={0} stroke="#91A0B2" /><Tooltip /><Line dataKey="median" name="Median nominal change" stroke="#59A69B" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></div>
+                </section>
+              </div>
+              <section className="panel">
+                <div className="panel-header"><div><div className="panel-kicker">LATEST AVAILABLE</div><h2>Highest and lowest nominal changes</h2></div></div>
+                <div className="table-wrap"><table><thead><tr><th>ECONOMY</th><th>YEAR</th><th>ANNUAL NOMINAL CHANGE</th></tr></thead><tbody>{[...latestGrowth].sort((a, b) => b.change - a.change).slice(0, 8).map((row) => <tr key={row.code}><td>{row.name}</td><td>{row.year}</td><td>{percent(row.change)}</td></tr>)}{[...latestGrowth].sort((a, b) => a.change - b.change).slice(0, 8).map((row) => <tr key={row.code}><td>{row.name}</td><td>{row.year}</td><td>{percent(row.change)}</td></tr>)}</tbody></table></div>
+              </section>
+              <div className="method-strip"><strong>Important</strong><span>These are changes in nominal GDP measured in current US dollars, not inflation-adjusted real GDP growth.</span></div>
+            </>
+          )}
+
+          {active === "Rankings" && (
+            <>
+              <section className="panel filter-panel ranking-filters">
+                <div className="filter-field"><label htmlFor="rank-measure">RANKING MEASURE</label><select id="rank-measure" value={rankMode} onChange={(event) => setRankMode(event.target.value as "size" | "change" | "cagr")}><option value="size">GDP size · latest available</option><option value="change">Annual nominal change · latest</option><option value="cagr">Nominal CAGR · selected window</option></select></div>
+                {rankMode === "cagr" && <div className="filter-field"><label htmlFor="rank-period">PERIOD START · {rankYearStart}</label><input id="rank-period" type="range" min={yearMin} max={yearMax - 1} value={rankYearStart} onChange={(event) => setRankYearStart(Number(event.target.value))} /></div>}
+              </section>
+              <section className="panel">
+                <div className="panel-header"><div><div className="panel-kicker">COUNTRY LEAGUE TABLE</div><h2>{rankMode === "size" ? "Largest national economies" : rankMode === "change" ? "Latest annual nominal changes" : "Nominal compound annual growth"}</h2></div><span className="panel-unit">TOP 15</span></div>
+                <div className="chart-wrap tall"><ResponsiveContainer width="100%" height="100%"><BarChart data={rankings} layout="vertical" margin={{ left: 8, right: 20 }}><CartesianGrid stroke="#27364A" horizontal={false} /><XAxis type="number" tickFormatter={rankMode === "size" ? tickMoney : (value) => value + "%"} tick={{ fill: "#8D9CAF", fontSize: 10 }} tickLine={false} axisLine={false} /><YAxis type="category" dataKey="name" width={145} tick={{ fill: "#C3CCD7", fontSize: 11 }} tickLine={false} axisLine={false} /><Tooltip formatter={(value: any) => rankMode === "size" ? money(Number(value)) : percent(Number(value))} /><Bar dataKey="value" fill={rankMode === "size" ? "#C7A66A" : "#59A69B"} barSize={14} radius={[0, 2, 2, 0]} /></BarChart></ResponsiveContainer></div>
+                <div className="table-wrap"><table><thead><tr><th>ECONOMY</th><th>OBSERVATION YEAR</th><th>MEASURE</th></tr></thead><tbody>{[...rankings].reverse().map((row) => <tr key={row.name}><td>{row.name}</td><td>{row.year}</td><td>{row.label}</td></tr>)}</tbody></table></div>
+                <p className="chart-note">Country rankings exclude regional and income-group aggregates. Each country uses its own latest available observation.</p>
+              </section>
+            </>
+          )}
+
+          {active === "Forecast lab" && (
+            <>
+              <section className="panel filter-panel forecast-controls">
+                <div className="filter-field"><label htmlFor="forecast-country">ECONOMY</label><select id="forecast-country" value={country} onChange={(event) => setCountry(event.target.value)}>{countryNames.map((name) => <option key={name}>{name}</option>)}</select></div>
+                <div className="filter-field"><label htmlFor="forecast-rate">ANNUAL ASSUMPTION · {forecastRate.toFixed(1)}%</label><input id="forecast-rate" type="range" min={-10} max={20} step={0.5} value={forecastRate} onChange={(event) => setForecastRate(Number(event.target.value))} /></div>
+                <div className="filter-field"><label htmlFor="forecast-horizon">HORIZON · {forecastYears} YEARS</label><input id="forecast-horizon" type="range" min={1} max={20} value={forecastYears} onChange={(event) => setForecastYears(Number(event.target.value))} /></div>
+              </section>
+              {(() => {
+                const series = countryRows.filter((row) => row.name === country).sort((a, b) => a.year - b.year);
+                const last = series[series.length - 1];
+                if (!last) return <div className="panel"><p>No source observations are available for this selection.</p></div>;
+                const projection = Array.from({ length: forecastYears + 1 }, (_, index) => ({
+                  year: last.year + index,
+                  observed: index === 0 ? last.gdp : null,
+                  scenario: last.gdp * Math.pow(1 + forecastRate / 100, index),
+                }));
+                const endpoint = last.gdp * Math.pow(1 + forecastRate / 100, forecastYears);
+                return <>
+                  <div className="metric-grid three"><Metric label="LAST OBSERVATION" value={money(last.gdp)} footnote={String(last.year)} /><Metric label="ASSUMED ANNUAL RATE" value={percent(forecastRate)} footnote="User-selected assumption" accent="teal" /><Metric label="ILLUSTRATIVE ENDPOINT" value={money(endpoint)} footnote={"Year " + (last.year + forecastYears)} accent="blue" /></div>
+                  <section className="panel"><div className="panel-header"><div><div className="panel-kicker">ILLUSTRATIVE SCENARIO</div><h2>{country} · assumed GDP path</h2></div><span className="panel-unit">CURRENT US$</span></div>
+                    <div className="chart-wrap tall"><ResponsiveContainer width="100%" height="100%"><LineChart data={projection}><CartesianGrid stroke="#27364A" vertical={false} /><XAxis dataKey="year" tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} /><YAxis tickFormatter={tickMoney} tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} width={70} /><Tooltip content={<AppChartTooltip />} /><Line dataKey="scenario" name="Assumption-based scenario" stroke="#C7A66A" strokeWidth={2.5} dot={{ r: 3 }} /></LineChart></ResponsiveContainer></div>
+                  </section>
+                  <div className="method-strip warning"><strong>Scenario, not forecast</strong><span>This mechanical path compounds one nominal growth assumption. It is not an official forecast and does not isolate real output, inflation or exchange-rate effects.</span></div>
+                </>;
+              })()}
+            </>
+          )}
+
+          {active === "Methodology" && (
+            <>
+              <div className="method-grid">
+                <section className="panel method-card"><div className="panel-kicker">01 / SOURCE</div><h2>World Bank GDP</h2><p>The repository contains the World Bank GDP (current US$) series, indicator <code>NY.GDP.MKTP.CD</code>, with annual columns from 1960 through 2022.</p><a href="https://data.worldbank.org/indicator/NY.GDP.MKTP.CD" target="_blank" rel="noreferrer">Open source indicator ↗</a></section>
+                <section className="panel method-card"><div className="panel-kicker">02 / GDP LEVEL</div><h2>Current US dollars</h2><p>The source reports nominal GDP translated into current US dollars. These values include price-level changes and exchange-rate movements.</p></section>
+                <section className="panel method-card"><div className="panel-kicker">03 / ANNUAL CHANGE</div><h2>Consecutive observations</h2><p>Annual nominal change is calculated as (GDP in year t ÷ GDP in year t−1 − 1) × 100. Missing years are not interpolated.</p></section>
+                <section className="panel method-card"><div className="panel-kicker">04 / CAGR</div><h2>Compound annual rate</h2><p>CAGR is (ending value ÷ starting value) raised to 1 ÷ elapsed years, minus 1. The selected endpoints are the first and last available observations in the period.</p></section>
+                <section className="panel method-card"><div className="panel-kicker">05 / INDEXING</div><h2>Common starting point</h2><p>Indexed GDP divides each country's observations by its own first available value and multiplies by 100. It compares paths, not absolute economic size.</p></section>
+                <section className="panel method-card"><div className="panel-kicker">06 / SCENARIOS</div><h2>User-entered assumptions</h2><p>The scenario lab applies GDP at t+h = GDP at t × (1+g) raised to h. These are mechanical illustrations, not official projections.</p></section>
+              </div>
+              <section className="panel source-panel"><div className="panel-kicker">DATA QUALITY & LIMITATIONS</div><h2>What the dashboard does — and does not — claim</h2><ul><li>Country rankings exclude source aggregates such as regional and income groups.</li><li>Every series uses its own latest available year; countries can have different coverage.</li><li>Missing observations remain missing. The application does not silently fill gaps.</li><li>Nominal changes in current US dollars are not inflation-adjusted real GDP growth.</li><li>Historical source file ends in 2022. The dashboard does not imply that this is current-year GDP.</li></ul></section>
+            </>
+          )}
+
+          <footer className="page-footer">
+            <span>GDP Research · Independent economic analysis</span>
+            <span>Source: World Bank Open Data · GDP current US$</span>
+          </footer>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function mergeSeries(rows: Array<Observation & { name: string }>) {
+  const byYear = new Map<number, Record<string, number | string>>();
+  for (const row of rows) {
+    if (!byYear.has(row.year)) byYear.set(row.year, { year: row.year });
+    byYear.get(row.year)![row.name] = row.gdp;
+  }
+  return Array.from(byYear.values()).sort((a, b) => Number(a.year) - Number(b.year));
+}
+
+function mergeIndexed(rows: Array<Observation & { index: number }>) {
+  const byYear = new Map<number, Record<string, number | string>>();
+  for (const row of rows) {
+    if (!byYear.has(row.year)) byYear.set(row.year, { year: row.year });
+    byYear.get(row.year)![row.name] = row.index;
+  }
+  return Array.from(byYear.values()).sort((a, b) => Number(a.year) - Number(b.year));
+}
+
+function median(values: number[]) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function growthHistogram(values: number[]) {
+  const edges = [-100, -50, -25, -10, 0, 10, 25, 50, 100];
+  const labels = ["<−50%", "−50 to −25%", "−25 to −10%", "−10 to 0%", "0–10%", "10–25%", "25–50%", "50–100%", ">100%"];
+  const counts = new Array(labels.length).fill(0);
+  for (const value of values) {
+    let index = labels.length - 1;
+    for (let i = 0; i < edges.length; i += 1) {
+      if (value < edges[i]) { index = Math.max(0, i); break; }
+    }
+    counts[index] += 1;
+  }
+  return labels.map((bin, index) => ({ bin, count: counts[index] }));
+}
+
+function yearlyMedian(rows: Array<{ year: number; change: number }>) {
+  const groups = new Map<number, number[]>();
+  for (const row of rows) {
+    if (!groups.has(row.year)) groups.set(row.year, []);
+    groups.get(row.year)!.push(row.change);
+  }
+  return Array.from(groups.entries()).map(([year, values]) => ({ year, median: median(values) })).sort((a, b) => a.year - b.year);
+}
