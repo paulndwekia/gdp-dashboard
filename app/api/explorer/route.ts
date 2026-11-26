@@ -1,5 +1,7 @@
 import { cache } from "react";
 
+export const maxDuration = 60;
+
 type JsonRecord = Record<string, any>;
 const WB_API = "https://api.worldbank.org/v2";
 const YEARS_MAX = new Date().getUTCFullYear() + 5;
