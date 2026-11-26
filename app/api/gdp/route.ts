@@ -88,7 +88,8 @@ async function fetchWorldBankSeries(forceRefresh: boolean) {
       const name = String(record.country?.value || "").trim();
       const year = Number(record.date);
       const gdp = record.value === null || record.value === undefined ? NaN : Number(record.value);
-      if (!code || !name || !Number.isInteger(year) || !Number.isFinite(gdp) || gdp <= 0) return [];
+      const observationStatus = String(record.obs_status || "").toUpperCase();
+      if (observationStatus === "F" || !code || !name || !Number.isInteger(year) || !Number.isFinite(gdp) || gdp <= 0) return [];
       return [{ code, name, year, gdp }];
     }));
     page += 1;
