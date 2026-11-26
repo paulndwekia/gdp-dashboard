@@ -54,7 +54,22 @@ const NAV: PageKey[] = [
   "Methodology",
 ];
 
-const COLORS = ["#C7A66A", "#59A69B", "#7799C7", "#C98272", "#A99BCB", "#D0B77F", "#7FA8A0", "#C18D9D"];
+const NAV_GROUPS: Array<{ label: string; items: PageKey[] }> = [
+  {
+    label: "RESEARCH",
+    items: ["Overview", "Country profile", "Compare economies", "Regional monitor"],
+  },
+  {
+    label: "ANALYSIS",
+    items: ["Growth analytics", "Rankings"],
+  },
+  {
+    label: "TOOLS & REFERENCE",
+    items: ["Forecast lab", "Methodology"],
+  },
+];
+
+const COLORS = ["#14804A", "#0D9488", "#2563EB", "#C05C4D", "#8B5CF6", "#65A30D", "#0891B2", "#DB2777"];
 const AGGREGATES = new Set([
   "AFE", "AFW", "ARB", "CEB", "CSS", "EAP", "EAS", "ECS", "EMU", "EUU",
   "FCS", "HIC", "IBD", "IBT", "IDA", "IDB", "IDX", "LAC", "LCN", "LDC",
@@ -155,6 +170,7 @@ export default function Home() {
   const [data, setData] = useState<Dataset | null>(null);
   const [loadError, setLoadError] = useState("");
   const [active, setActive] = useState<PageKey>("Overview");
+  const [navQuery, setNavQuery] = useState("");
   const [country, setCountry] = useState("Kenya");
   const [rangeStart, setRangeStart] = useState(2000);
   const [rangeEnd, setRangeEnd] = useState(2022);
@@ -333,13 +349,43 @@ export default function Home() {
           </div>
         </div>
         <div className="nav-caption">RESEARCH WORKSPACE</div>
+        <label className="nav-search">
+          <span className="sr-only">Search dashboard sections</span>
+          <input
+            type="search"
+            value={navQuery}
+            onChange={(event) => setNavQuery(event.target.value)}
+            placeholder="Find a section…"
+            aria-label="Find a dashboard section"
+          />
+          <span className="nav-search-shortcut" aria-hidden="true">⌕</span>
+        </label>
         <nav className="nav-list" aria-label="Main navigation">
-          {NAV.map((item) => (
-            <button key={item} onClick={() => setActive(item)} className={"nav-item" + (active === item ? " active" : "")}>
-              <span className="nav-indicator" />
-              <span>{item}</span>
-            </button>
-          ))}
+          {NAV_GROUPS.map((group) => {
+            const visibleItems = group.items.filter((item) =>
+              item.toLowerCase().includes(navQuery.trim().toLowerCase())
+            );
+            if (!visibleItems.length) return null;
+            return (
+              <div className="nav-group" key={group.label}>
+                <div className="nav-group-label">{group.label}</div>
+                {visibleItems.map((item) => (
+                  <button
+                    key={item}
+                    onClick={() => setActive(item)}
+                    className={"nav-item" + (active === item ? " active" : "")}
+                    aria-current={active === item ? "page" : undefined}
+                  >
+                    <span className="nav-indicator" aria-hidden="true" />
+                    <span>{item}</span>
+                  </button>
+                ))}
+              </div>
+            );
+          })}
+          {NAV_GROUPS.every((group) => !group.items.some((item) =>
+            item.toLowerCase().includes(navQuery.trim().toLowerCase())
+          )) && <div className="nav-empty">No matching section</div>}
         </nav>
         <div className="sidebar-foot">
           <div className="source-line">SOURCE</div>
@@ -352,6 +398,16 @@ export default function Home() {
       <main className="main-area">
         <header className="topbar">
           <div className="breadcrumb">RESEARCH <span>/</span> {active.toUpperCase()}</div>
+          <label className="mobile-nav-switcher">
+            <span>GO TO</span>
+            <select
+              aria-label="Go to dashboard section"
+              value={active}
+              onChange={(event) => setActive(event.target.value as PageKey)}
+            >
+              {NAV.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+          </label>
           <div className="topbar-right">
             <span className="status-dot" />
             <span>Historical dataset</span>
@@ -385,12 +441,12 @@ export default function Home() {
                   <div className="chart-wrap tall">
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={worldRows}>
-                        <defs><linearGradient id="worldFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#C7A66A" stopOpacity={0.22} /><stop offset="100%" stopColor="#C7A66A" stopOpacity={0.01} /></linearGradient></defs>
-                        <CartesianGrid stroke="#27364A" vertical={false} />
-                        <XAxis dataKey="year" tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={35} />
-                        <YAxis tickFormatter={tickMoney} tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} width={65} />
+                        <defs><linearGradient id="worldFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#14804A" stopOpacity={0.22} /><stop offset="100%" stopColor="#14804A" stopOpacity={0.01} /></linearGradient></defs>
+                        <CartesianGrid stroke="#E0E9E3" vertical={false} />
+                        <XAxis dataKey="year" tick={{ fill: "#718176", fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={35} />
+                        <YAxis tickFormatter={tickMoney} tick={{ fill: "#718176", fontSize: 11 }} tickLine={false} axisLine={false} width={65} />
                         <Tooltip content={<AppChartTooltip />} />
-                        <Area type="monotone" dataKey="gdp" name="World GDP" stroke="#C7A66A" strokeWidth={2.3} fill="url(#worldFill)" activeDot={{ r: 4, fill: "#C7A66A" }} />
+                        <Area type="monotone" dataKey="gdp" name="World GDP" stroke="#14804A" strokeWidth={2.3} fill="url(#worldFill)" activeDot={{ r: 4, fill: "#14804A" }} />
                       </AreaChart>
                     </ResponsiveContainer>
                   </div>
@@ -405,11 +461,11 @@ export default function Home() {
                   <div className="chart-wrap tall">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={[...topEconomies].reverse()} layout="vertical" margin={{ left: 4, right: 12, top: 4, bottom: 4 }}>
-                        <CartesianGrid stroke="#27364A" horizontal={false} />
-                        <XAxis type="number" tickFormatter={tickMoney} tick={{ fill: "#8D9CAF", fontSize: 10 }} tickLine={false} axisLine={false} />
-                        <YAxis type="category" dataKey="name" width={110} tick={{ fill: "#C3CCD7", fontSize: 11 }} tickLine={false} axisLine={false} />
+                        <CartesianGrid stroke="#E0E9E3" horizontal={false} />
+                        <XAxis type="number" tickFormatter={tickMoney} tick={{ fill: "#718176", fontSize: 10 }} tickLine={false} axisLine={false} />
+                        <YAxis type="category" dataKey="name" width={110} tick={{ fill: "#47584D", fontSize: 11 }} tickLine={false} axisLine={false} />
                         <Tooltip content={<AppChartTooltip />} />
-                        <Bar dataKey="gdp" name="GDP" fill="#59A69B" barSize={13} radius={[0, 2, 2, 0]} />
+                        <Bar dataKey="gdp" name="GDP" fill="#0D9488" barSize={13} radius={[0, 2, 2, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -429,11 +485,11 @@ export default function Home() {
                 <div className="chart-wrap medium">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={mergeSeries(selectedCompareRows)}>
-                      <CartesianGrid stroke="#27364A" vertical={false} />
-                      <XAxis dataKey="year" tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} />
-                      <YAxis tickFormatter={tickMoney} tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} width={65} />
+                      <CartesianGrid stroke="#E0E9E3" vertical={false} />
+                      <XAxis dataKey="year" tick={{ fill: "#718176", fontSize: 11 }} tickLine={false} axisLine={false} />
+                      <YAxis tickFormatter={tickMoney} tick={{ fill: "#718176", fontSize: 11 }} tickLine={false} axisLine={false} width={65} />
                       <Tooltip content={<AppChartTooltip />} />
-                      <Legend wrapperStyle={{ color: "#AAB7C7", fontSize: 11 }} />
+                      <Legend wrapperStyle={{ color: "#65766B", fontSize: 11 }} />
                       {compareNames.map((name, index) => <Line key={name} dataKey={name} name={name} type="monotone" stroke={COLORS[index % COLORS.length]} strokeWidth={2} dot={false} connectNulls={false} />)}
                     </LineChart>
                   </ResponsiveContainer>
@@ -460,9 +516,9 @@ export default function Home() {
                 <div className="panel-header"><div><div className="panel-kicker">HISTORICAL SERIES</div><h2>{country} · GDP path</h2></div><span className="panel-unit">CURRENT US$</span></div>
                 <div className="chart-wrap tall">
                   <ResponsiveContainer width="100%" height="100%"><AreaChart data={activeCountryRows}>
-                    <defs><linearGradient id="profileFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#59A69B" stopOpacity={0.2} /><stop offset="100%" stopColor="#59A69B" stopOpacity={0.01} /></linearGradient></defs>
-                    <CartesianGrid stroke="#27364A" vertical={false} /><XAxis dataKey="year" tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} /><YAxis tickFormatter={tickMoney} tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} width={70} /><Tooltip content={<AppChartTooltip />} />
-                    <Area dataKey="gdp" name="GDP" type="monotone" stroke="#59A69B" strokeWidth={2.3} fill="url(#profileFill)" />
+                    <defs><linearGradient id="profileFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#0D9488" stopOpacity={0.2} /><stop offset="100%" stopColor="#0D9488" stopOpacity={0.01} /></linearGradient></defs>
+                    <CartesianGrid stroke="#E0E9E3" vertical={false} /><XAxis dataKey="year" tick={{ fill: "#718176", fontSize: 11 }} tickLine={false} axisLine={false} /><YAxis tickFormatter={tickMoney} tick={{ fill: "#718176", fontSize: 11 }} tickLine={false} axisLine={false} width={70} /><Tooltip content={<AppChartTooltip />} />
+                    <Area dataKey="gdp" name="GDP" type="monotone" stroke="#0D9488" strokeWidth={2.3} fill="url(#profileFill)" />
                   </AreaChart></ResponsiveContainer>
                 </div>
               </section>
@@ -489,8 +545,8 @@ export default function Home() {
               <section className="panel">
                 <div className="panel-header"><div><div className="panel-kicker">TIME SERIES COMPARISON</div><h2>{compareMode === "level" ? "Nominal GDP levels" : "Relative GDP paths"}</h2></div><span className="panel-unit">{compareMode === "level" ? "CURRENT US$" : "INDEX POINTS"}</span></div>
                 <div className="chart-wrap tall"><ResponsiveContainer width="100%" height="100%">
-                  {compareMode === "level" ? <LineChart data={mergeSeries(selectedCompareRows)}><CartesianGrid stroke="#27364A" vertical={false} /><XAxis dataKey="year" tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} /><YAxis tickFormatter={tickMoney} tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} width={65} /><Tooltip content={<AppChartTooltip />} /><Legend wrapperStyle={{ color: "#AAB7C7", fontSize: 11 }} />{compareNames.map((name, index) => <Line key={name} dataKey={name} name={name} stroke={COLORS[index % COLORS.length]} strokeWidth={2} dot={false} />)}</LineChart> :
-                  <LineChart data={mergeIndexed(indexedCompareRows as Array<Observation & { index: number }>)}><CartesianGrid stroke="#27364A" vertical={false} /><XAxis dataKey="year" tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} /><YAxis tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} /><ReferenceLine y={100} stroke="#91A0B2" strokeDasharray="4 4" /><Tooltip /><Legend wrapperStyle={{ color: "#AAB7C7", fontSize: 11 }} />{compareNames.map((name, index) => <Line key={name} dataKey={name} name={name} stroke={COLORS[index % COLORS.length]} strokeWidth={2} dot={false} />)}</LineChart>}
+                  {compareMode === "level" ? <LineChart data={mergeSeries(selectedCompareRows)}><CartesianGrid stroke="#E0E9E3" vertical={false} /><XAxis dataKey="year" tick={{ fill: "#718176", fontSize: 11 }} tickLine={false} axisLine={false} /><YAxis tickFormatter={tickMoney} tick={{ fill: "#718176", fontSize: 11 }} tickLine={false} axisLine={false} width={65} /><Tooltip content={<AppChartTooltip />} /><Legend wrapperStyle={{ color: "#65766B", fontSize: 11 }} />{compareNames.map((name, index) => <Line key={name} dataKey={name} name={name} stroke={COLORS[index % COLORS.length]} strokeWidth={2} dot={false} />)}</LineChart> :
+                  <LineChart data={mergeIndexed(indexedCompareRows as Array<Observation & { index: number }>)}><CartesianGrid stroke="#E0E9E3" vertical={false} /><XAxis dataKey="year" tick={{ fill: "#718176", fontSize: 11 }} tickLine={false} axisLine={false} /><YAxis tick={{ fill: "#718176", fontSize: 11 }} tickLine={false} axisLine={false} /><ReferenceLine y={100} stroke="#6B7D72" strokeDasharray="4 4" /><Tooltip /><Legend wrapperStyle={{ color: "#65766B", fontSize: 11 }} />{compareNames.map((name, index) => <Line key={name} dataKey={name} name={name} stroke={COLORS[index % COLORS.length]} strokeWidth={2} dot={false} />)}</LineChart>}
                 </ResponsiveContainer></div>
                 <p className="chart-note">Each indexed country starts at its first available observation. The indexed view compares the pace of change, not absolute GDP size.</p>
               </section>
@@ -506,7 +562,7 @@ export default function Home() {
               <section className="panel">
                 <div className="panel-header"><div><div className="panel-kicker">REGIONAL ECONOMIC SCALE</div><h2>GDP by region</h2></div><span className="panel-unit">CURRENT US$</span></div>
                 <div className="chart-wrap tall"><ResponsiveContainer width="100%" height="100%"><LineChart data={mergeSeries(regionRows)}>
-                  <CartesianGrid stroke="#27364A" vertical={false} /><XAxis dataKey="year" tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} /><YAxis tickFormatter={tickMoney} tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} width={65} /><Tooltip content={<AppChartTooltip />} /><Legend wrapperStyle={{ color: "#AAB7C7", fontSize: 11 }} />{Array.from(new Set(regionRows.map((row) => row.name))).map((name, index) => <Line key={name} dataKey={name} name={name} stroke={COLORS[index % COLORS.length]} strokeWidth={2} dot={false} />)}
+                  <CartesianGrid stroke="#E0E9E3" vertical={false} /><XAxis dataKey="year" tick={{ fill: "#718176", fontSize: 11 }} tickLine={false} axisLine={false} /><YAxis tickFormatter={tickMoney} tick={{ fill: "#718176", fontSize: 11 }} tickLine={false} axisLine={false} width={65} /><Tooltip content={<AppChartTooltip />} /><Legend wrapperStyle={{ color: "#65766B", fontSize: 11 }} />{Array.from(new Set(regionRows.map((row) => row.name))).map((name, index) => <Line key={name} dataKey={name} name={name} stroke={COLORS[index % COLORS.length]} strokeWidth={2} dot={false} />)}
                 </LineChart></ResponsiveContainer></div>
                 <p className="chart-note">These regional aggregates are provided by the source. They are not calculated by adding the individual country observations displayed here.</p>
               </section>
@@ -523,12 +579,12 @@ export default function Home() {
               <div className="chart-grid">
                 <section className="panel">
                   <div className="panel-header"><div><div className="panel-kicker">DISTRIBUTION</div><h2>Annual nominal change</h2></div><span className="panel-unit">COUNTRY-YEAR · %</span></div>
-                  <div className="chart-wrap medium"><ResponsiveContainer width="100%" height="100%"><BarChart data={growthHistogram(growthRows.map((row) => row.change))}><CartesianGrid stroke="#27364A" vertical={false} /><XAxis dataKey="bin" tick={{ fill: "#8D9CAF", fontSize: 10 }} tickLine={false} axisLine={false} /><YAxis tick={{ fill: "#8D9CAF", fontSize: 10 }} tickLine={false} axisLine={false} /><Tooltip /><ReferenceLine x="0–10%" stroke="#C7A66A" strokeDasharray="3 3" /><Bar dataKey="count" fill="#7799C7" radius={[2, 2, 0, 0]} /></BarChart></ResponsiveContainer></div>
+                  <div className="chart-wrap medium"><ResponsiveContainer width="100%" height="100%"><BarChart data={growthHistogram(growthRows.map((row) => row.change))}><CartesianGrid stroke="#E0E9E3" vertical={false} /><XAxis dataKey="bin" tick={{ fill: "#718176", fontSize: 10 }} tickLine={false} axisLine={false} /><YAxis tick={{ fill: "#718176", fontSize: 10 }} tickLine={false} axisLine={false} /><Tooltip /><ReferenceLine x="0–10%" stroke="#14804A" strokeDasharray="3 3" /><Bar dataKey="count" fill="#2563EB" radius={[2, 2, 0, 0]} /></BarChart></ResponsiveContainer></div>
                   <p className="chart-note">Values beyond the displayed range are grouped into the outer bins so the central distribution remains readable.</p>
                 </section>
                 <section className="panel">
                   <div className="panel-header"><div><div className="panel-kicker">YEARLY MEDIAN</div><h2>Nominal change through time</h2></div><span className="panel-unit">MEDIAN · %</span></div>
-                  <div className="chart-wrap medium"><ResponsiveContainer width="100%" height="100%"><LineChart data={yearlyMedian(growthRows)}><CartesianGrid stroke="#27364A" vertical={false} /><XAxis dataKey="year" tick={{ fill: "#8D9CAF", fontSize: 10 }} tickLine={false} axisLine={false} /><YAxis tick={{ fill: "#8D9CAF", fontSize: 10 }} tickLine={false} axisLine={false} /><ReferenceLine y={0} stroke="#91A0B2" /><Tooltip /><Line dataKey="median" name="Median nominal change" stroke="#59A69B" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></div>
+                  <div className="chart-wrap medium"><ResponsiveContainer width="100%" height="100%"><LineChart data={yearlyMedian(growthRows)}><CartesianGrid stroke="#E0E9E3" vertical={false} /><XAxis dataKey="year" tick={{ fill: "#718176", fontSize: 10 }} tickLine={false} axisLine={false} /><YAxis tick={{ fill: "#718176", fontSize: 10 }} tickLine={false} axisLine={false} /><ReferenceLine y={0} stroke="#6B7D72" /><Tooltip /><Line dataKey="median" name="Median nominal change" stroke="#0D9488" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></div>
                 </section>
               </div>
               <section className="panel">
@@ -547,7 +603,7 @@ export default function Home() {
               </section>
               <section className="panel">
                 <div className="panel-header"><div><div className="panel-kicker">COUNTRY LEAGUE TABLE</div><h2>{rankMode === "size" ? "Largest national economies" : rankMode === "change" ? "Latest annual nominal changes" : "Nominal compound annual growth"}</h2></div><span className="panel-unit">TOP 15</span></div>
-                <div className="chart-wrap tall"><ResponsiveContainer width="100%" height="100%"><BarChart data={rankings} layout="vertical" margin={{ left: 8, right: 20 }}><CartesianGrid stroke="#27364A" horizontal={false} /><XAxis type="number" tickFormatter={rankMode === "size" ? tickMoney : (value) => value + "%"} tick={{ fill: "#8D9CAF", fontSize: 10 }} tickLine={false} axisLine={false} /><YAxis type="category" dataKey="name" width={145} tick={{ fill: "#C3CCD7", fontSize: 11 }} tickLine={false} axisLine={false} /><Tooltip formatter={(value: any) => rankMode === "size" ? money(Number(value)) : percent(Number(value))} /><Bar dataKey="value" fill={rankMode === "size" ? "#C7A66A" : "#59A69B"} barSize={14} radius={[0, 2, 2, 0]} /></BarChart></ResponsiveContainer></div>
+                <div className="chart-wrap tall"><ResponsiveContainer width="100%" height="100%"><BarChart data={rankings} layout="vertical" margin={{ left: 8, right: 20 }}><CartesianGrid stroke="#E0E9E3" horizontal={false} /><XAxis type="number" tickFormatter={rankMode === "size" ? tickMoney : (value) => value + "%"} tick={{ fill: "#718176", fontSize: 10 }} tickLine={false} axisLine={false} /><YAxis type="category" dataKey="name" width={145} tick={{ fill: "#47584D", fontSize: 11 }} tickLine={false} axisLine={false} /><Tooltip formatter={(value: any) => rankMode === "size" ? money(Number(value)) : percent(Number(value))} /><Bar dataKey="value" fill={rankMode === "size" ? "#14804A" : "#0D9488"} barSize={14} radius={[0, 2, 2, 0]} /></BarChart></ResponsiveContainer></div>
                 <div className="table-wrap"><table><thead><tr><th>ECONOMY</th><th>OBSERVATION YEAR</th><th>MEASURE</th></tr></thead><tbody>{[...rankings].reverse().map((row) => <tr key={row.name}><td>{row.name}</td><td>{row.year}</td><td>{row.label}</td></tr>)}</tbody></table></div>
                 <p className="chart-note">Country rankings exclude regional and income-group aggregates. Each country uses its own latest available observation.</p>
               </section>
@@ -574,7 +630,7 @@ export default function Home() {
                 return <>
                   <div className="metric-grid three"><Metric label="LAST OBSERVATION" value={money(last.gdp)} footnote={String(last.year)} /><Metric label="ASSUMED ANNUAL RATE" value={percent(forecastRate)} footnote="User-selected assumption" accent="teal" /><Metric label="ILLUSTRATIVE ENDPOINT" value={money(endpoint)} footnote={"Year " + (last.year + forecastYears)} accent="blue" /></div>
                   <section className="panel"><div className="panel-header"><div><div className="panel-kicker">ILLUSTRATIVE SCENARIO</div><h2>{country} · assumed GDP path</h2></div><span className="panel-unit">CURRENT US$</span></div>
-                    <div className="chart-wrap tall"><ResponsiveContainer width="100%" height="100%"><LineChart data={projection}><CartesianGrid stroke="#27364A" vertical={false} /><XAxis dataKey="year" tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} /><YAxis tickFormatter={tickMoney} tick={{ fill: "#8D9CAF", fontSize: 11 }} tickLine={false} axisLine={false} width={70} /><Tooltip content={<AppChartTooltip />} /><Line dataKey="scenario" name="Assumption-based scenario" stroke="#C7A66A" strokeWidth={2.5} dot={{ r: 3 }} /></LineChart></ResponsiveContainer></div>
+                    <div className="chart-wrap tall"><ResponsiveContainer width="100%" height="100%"><LineChart data={projection}><CartesianGrid stroke="#E0E9E3" vertical={false} /><XAxis dataKey="year" tick={{ fill: "#718176", fontSize: 11 }} tickLine={false} axisLine={false} /><YAxis tickFormatter={tickMoney} tick={{ fill: "#718176", fontSize: 11 }} tickLine={false} axisLine={false} width={70} /><Tooltip content={<AppChartTooltip />} /><Line dataKey="scenario" name="Assumption-based scenario" stroke="#14804A" strokeWidth={2.5} dot={{ r: 3 }} /></LineChart></ResponsiveContainer></div>
                   </section>
                   <div className="method-strip warning"><strong>Scenario, not forecast</strong><span>This mechanical path compounds one nominal growth assumption. It is not an official forecast and does not isolate real output, inflation or exchange-rate effects.</span></div>
                 </>;
@@ -632,19 +688,32 @@ function median(values: number[]) {
 }
 
 function growthHistogram(values: number[]) {
-  const edges = [-100, -50, -25, -10, 0, 10, 25, 50, 100];
-  const labels = ["<−50%", "−50 to −25%", "−25 to −10%", "−10 to 0%", "0–10%", "10–25%", "25–50%", "50–100%", ">100%"];
+  const labels = [
+    "<−50%",
+    "−50 to −25%",
+    "−25 to −10%",
+    "−10 to 0%",
+    "0–10%",
+    "10–25%",
+    "25–50%",
+    "50–100%",
+    ">100%",
+  ];
   const counts = new Array(labels.length).fill(0);
   for (const value of values) {
-    let index = labels.length - 1;
-    for (let i = 0; i < edges.length; i += 1) {
-      if (value < edges[i]) { index = Math.max(0, i); break; }
-    }
+    let index = 8;
+    if (value < -50) index = 0;
+    else if (value < -25) index = 1;
+    else if (value < -10) index = 2;
+    else if (value < 0) index = 3;
+    else if (value < 10) index = 4;
+    else if (value < 25) index = 5;
+    else if (value < 50) index = 6;
+    else if (value <= 100) index = 7;
     counts[index] += 1;
   }
   return labels.map((bin, index) => ({ bin, count: counts[index] }));
 }
-
 function yearlyMedian(rows: Array<{ year: number; change: number }>) {
   const groups = new Map<number, number[]>();
   for (const row of rows) {
