@@ -75,7 +75,7 @@ async function fetchIndicatorSeries(indicator: string, startYear: number, endYea
   let pages = 1;
   let sourceUpdated: string | null = null;
   while (page <= pages && page <= 12) {
-    const url = `${WB_API}/country/all/indicator/${encodeURIComponent(indicator)}?format=json&per_page=20000&page=${page}&date=${startYear}:${endYear}`;
+    const url = `${WB_API}/country/all/indicator/${encodeURIComponent(indicator)}?format=json&per_page=20000&page=${page}&date=${startYear}:${endYear}&source=2`;
     const payload = await getJson(url, 21600);
     if (!Array.isArray(payload) || !Array.isArray(payload[1])) {
       throw new Error("The World Bank returned an unexpected indicator response.");
@@ -111,7 +111,7 @@ export async function GET(request: Request) {
     try {
       const [seriesResult, metaPayload] = await Promise.all([
         fetchIndicatorSeries(indicator, startYear, endYear),
-        getJson(`${WB_API}/indicator/${encodeURIComponent(indicator)}?format=json&per_page=50`, 86400).catch(() => null),
+        getJson(`${WB_API}/indicator/${encodeURIComponent(indicator)}?format=json&per_page=50&source=2`, 86400).catch(() => null),
       ]);
       const meta = Array.isArray(metaPayload) && Array.isArray(metaPayload[1]) ? metaPayload[1][0] : null;
       const series = seriesResult.rows.flatMap((record) => {
