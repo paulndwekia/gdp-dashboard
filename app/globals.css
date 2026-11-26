@@ -181,6 +181,9 @@ thead th { color: #77877D; font-size: 8px; letter-spacing: .13em; font-weight: 7
 tbody td { color: #43554A; border-bottom: 1px solid rgba(27,75,47,.08); padding: 11px 12px; white-space: nowrap; }
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover td { background: #F6FAF7; }
+.compare-search-row { display: flex; align-items: center; gap: 10px; margin: 12px 0 10px; }
+.compare-search-row input { flex: 1; min-width: 0; width: 100%; border: 1px solid var(--line-strong); border-radius: 6px; padding: 9px 11px; background: #F8FBF8; color: var(--text); font-size: 11px; }
+.compare-search-row span { color: #7B8B80; font-size: 9px; font-weight: 700; white-space: nowrap; }
 .choice-list, .region-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; max-height: 260px; overflow: auto; }
 .region-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); max-height: none; }
 .choice { display: flex; align-items: center; gap: 8px; color: #52645A; font-size: 10px; padding: 9px; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; background: #FFFFFF; }
