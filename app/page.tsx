@@ -203,6 +203,7 @@ export default function Home() {
   const [compareSearch, setCompareSearch] = useState("");
   const [compareMode, setCompareMode] = useState<"level" | "index">("level");
   const [regionCodes, setRegionCodes] = useState<string[]>(["AFE", "AFW", "EAS", "ECS", "LCN", "SAS"]);
+  const [growthPeriod, setGrowthPeriod] = useState("all");
   const [rankMode, setRankMode] = useState<"size" | "change" | "cagr">("size");
   const [rankYearStart, setRankYearStart] = useState(2012);
   const [forecastRate, setForecastRate] = useState(5);
@@ -370,6 +371,15 @@ export default function Home() {
     return values;
   }, [countryRows]);
 
+  const growthYears = useMemo(
+    () => Array.from(new Set(growthRows.map((row) => row.year))).sort((a, b) => a - b),
+    [growthRows]
+  );
+  const visibleGrowthRows = useMemo(
+    () => growthPeriod === "all" ? growthRows : growthRows.filter((row) => String(row.year) === growthPeriod),
+    [growthRows, growthPeriod]
+  );
+
   const latestGrowth = useMemo(() => {
     const last = new Map<string, { name: string; code: string; year: number; change: number }>();
     for (const row of growthRows) {
@@ -431,6 +441,10 @@ export default function Home() {
     setRegionCodes((current) =>
       current.includes(code) ? current.filter((item) => item !== code) : [...current, code]
     );
+  }
+
+  function selectAllRegions() {
+    setRegionCodes(Object.keys(REGION_NAMES).filter((code) => code !== "WLD"));
   }
 
   const pageDescription: Record<PageKey, string> = {
@@ -741,7 +755,7 @@ export default function Home() {
             <>
               <section className="panel">
                 <div className="panel-header panel-header-wrap"><div><div className="panel-kicker">COMPARISON SET</div><h2>Choose economies</h2></div><span className="panel-unit">{compareNames.length} SELECTED · UP TO 8</span></div>
-                <div className="compare-search-row"><input type="search" value={compareSearch} onChange={(event) => setCompareSearch(event.target.value)} placeholder="Find an economy…" aria-label="Search economies to compare" /><span>{compareNames.length} / 8 selected</span></div>
+                <div className="compare-search-row"><input type="search" value={compareSearch} onChange={(event) => setCompareSearch(event.target.value)} placeholder="Find an economy…" aria-label="Search economies to compare" /><button className="export-button" onClick={() => setCompareNames(["Kenya", "United States", "China", "India"])}>Reset selection</button><span>{compareNames.length} / 8 selected</span></div>
                 <div className="choice-list">{visibleCompareCountries.map((name) => <label className="choice" key={name}><input type="checkbox" checked={compareNames.includes(name)} onChange={() => toggleCompare(name)} disabled={!compareNames.includes(name) && compareNames.length >= 8} /><span>{name}</span></label>)}</div>
                 {visibleCompareCountries.length === 0 && <p className="chart-note">No economies match that search.</p>}
                 <div className="segmented"><button className={compareMode === "level" ? "selected" : ""} onClick={() => setCompareMode("level")}>GDP level</button><button className={compareMode === "index" ? "selected" : ""} onClick={() => setCompareMode("index")}>Indexed · start = 100</button></div>
@@ -761,6 +775,7 @@ export default function Home() {
             <>
               <section className="panel">
                 <div className="panel-header"><div><div className="panel-kicker">REGIONAL SERIES</div><h2>Select regions</h2></div><span className="panel-unit">SOURCE AGGREGATES</span></div>
+                <div className="segmented"><button className={regionCodes.length === Object.keys(REGION_NAMES).length - 1 ? "selected" : ""} onClick={selectAllRegions}>Select all regions</button><button className={regionCodes.length === 0 ? "selected" : ""} onClick={() => setRegionCodes([])}>Clear selection</button></div>
                 <div className="region-grid">{Object.entries(REGION_NAMES).filter(([code]) => code !== "WLD").map(([code, name]) => <label className="choice" key={code}><input type="checkbox" checked={regionCodes.includes(code)} onChange={() => toggleRegion(code)} /><span>{name}</span></label>)}</div>
               </section>
               <section className="panel">
@@ -775,16 +790,26 @@ export default function Home() {
 
           {active === "Growth analytics" && (
             <>
+              <section className="panel filter-panel">
+                <div className="filter-field">
+                  <label htmlFor="growth-period">OBSERVATION YEAR</label>
+                  <select id="growth-period" value={growthPeriod} onChange={(event) => setGrowthPeriod(event.target.value)}>
+                    <option value="all">All available years</option>
+                    {growthYears.map((year) => <option key={year} value={String(year)}>{year}</option>)}
+                  </select>
+                </div>
+                <p className="chart-note">{growthPeriod === "all" ? "The distribution below uses all available consecutive country-year observations." : "The distribution below isolates year " + growthPeriod + " so country changes can be compared within the same year."}</p>
+              </section>
               <div className="metric-grid three">
-                <Metric label="COUNTRY-YEAR OBSERVATIONS" value={growthRows.length.toLocaleString("en-US")} footnote="Consecutive years only" />
-                <Metric label="MEDIAN NOMINAL CHANGE" value={growthRows.length ? percent(median(growthRows.map((row) => row.change))) : "—"} footnote="Across available observations" accent="teal" />
-                <Metric label="NEGATIVE CHANGES" value={growthRows.length ? ((growthRows.filter((row) => row.change < 0).length / growthRows.length) * 100).toFixed(1) + "%" : "—"} footnote="Share of country-year observations" accent="blue" />
+                <Metric label="COUNTRY-YEAR OBSERVATIONS" value={visibleGrowthRows.length.toLocaleString("en-US")} footnote={growthPeriod === "all" ? "Consecutive years only" : "Selected observation year"} />
+                <Metric label="MEDIAN NOMINAL CHANGE" value={visibleGrowthRows.length ? percent(median(visibleGrowthRows.map((row) => row.change))) : "—"} footnote={growthPeriod === "all" ? "Across available observations" : "For " + growthPeriod} accent="teal" />
+                <Metric label="NEGATIVE CHANGES" value={visibleGrowthRows.length ? ((visibleGrowthRows.filter((row) => row.change < 0).length / visibleGrowthRows.length) * 100).toFixed(1) + "%" : "—"} footnote="Share of country-year observations" accent="blue" />
               </div>
-              {growthRows.length === 0 && <div className="method-strip warning"><strong>Not enough consecutive observations</strong><span>Growth calculations require a reported observation in two adjacent years. No missing years are interpolated.</span></div>}
+              {visibleGrowthRows.length === 0 && <div className="method-strip warning"><strong>Not enough consecutive observations</strong><span>Growth calculations require a reported observation in two adjacent years. No missing years are interpolated.</span></div>}
               <div className="chart-grid">
                 <section className="panel">
                   <div className="panel-header"><div><div className="panel-kicker">DISTRIBUTION</div><h2>Annual nominal change</h2></div><span className="panel-unit">COUNTRY-YEAR · %</span></div>
-                  <div className="chart-wrap medium"><ResponsiveContainer width="100%" height="100%"><BarChart data={growthHistogram(growthRows.map((row) => row.change))}><CartesianGrid stroke="#E0E9E3" vertical={false} /><XAxis dataKey="bin" tick={{ fill: "#718176", fontSize: 10 }} tickLine={false} axisLine={false} /><YAxis tick={{ fill: "#718176", fontSize: 10 }} tickLine={false} axisLine={false} /><Tooltip /><ReferenceLine x="0–10%" stroke="#14804A" strokeDasharray="3 3" /><Bar dataKey="count" fill="#2563EB" radius={[2, 2, 0, 0]} /></BarChart></ResponsiveContainer></div>
+                  <div className="chart-wrap medium"><ResponsiveContainer width="100%" height="100%"><BarChart data={growthHistogram(visibleGrowthRows.map((row) => row.change))}><CartesianGrid stroke="#E0E9E3" vertical={false} /><XAxis dataKey="bin" tick={{ fill: "#718176", fontSize: 10 }} tickLine={false} axisLine={false} /><YAxis tick={{ fill: "#718176", fontSize: 10 }} tickLine={false} axisLine={false} /><Tooltip /><ReferenceLine x="0–10%" stroke="#14804A" strokeDasharray="3 3" /><Bar dataKey="count" fill="#2563EB" radius={[2, 2, 0, 0]} /></BarChart></ResponsiveContainer></div>
                   <p className="chart-note">Values beyond the displayed range are grouped into the outer bins so the central distribution remains readable.</p>
                 </section>
                 <section className="panel">
@@ -857,12 +882,12 @@ export default function Home() {
           {active === "Methodology" && (
             <>
               <div className="method-grid">
-                <section className="panel method-card"><div className="panel-kicker">01 / WHERE THE NUMBERS COME FROM</div><h2>Start with the original source</h2><p>For the historical record, we go straight to the World Bank. Its GDP series is called <code>NY.GDP.MKTP.CD</code>. We pull the latest release, keep the year attached to every figure, and do not fill missing years with guesses.</p><a href="https://data.worldbank.org/indicator/NY.GDP.MKTP.CD" target="_blank" rel="noreferrer">See the World Bank GDP series ↗</a></section>
-                <section className="panel method-card"><div className="panel-kicker">02 / ESTIMATES & PROJECTIONS</div><h2>IMF World Economic Outlook</h2><p>The IMF publishes a separate outlook. We use it to show the latest estimates and future projections when they go beyond the last reported World Bank year. These figures are useful for forward-looking analysis, but they are not presented as historical results.</p><a href="https://data.imf.org/en/datasets/IMF.RES%3AWEO" target="_blank" rel="noreferrer">Open latest WEO dataset ↗</a></section>
+                <section className="panel method-card"><div className="panel-kicker">01 / WHERE THE NUMBERS COME FROM</div><h2>Start with the original source</h2><p>For the historical record, we go straight to the World Bank. Its GDP series is called <code>NY.GDP.MKTP.CD</code>. We pull the latest release, keep the year attached to every figure, and do not fill missing years with guesses. The source reports its last update as <strong>{data.worldBankLastUpdated || "not supplied"}</strong>.</p><a href="https://data.worldbank.org/indicator/NY.GDP.MKTP.CD" target="_blank" rel="noreferrer">See the World Bank GDP series ↗</a></section>
+                <section className="panel method-card"><div className="panel-kicker">02 / ESTIMATES & PROJECTIONS</div><h2>IMF World Economic Outlook</h2><p>The active source vintage is <strong>{data.imfStatus === "live" ? data.outlookEdition : "currently unavailable"}</strong>{data.imfLastModified ? " (indicator metadata last modified " + data.imfLastModified + ")" : ""}. We use its estimates and projections only when they go beyond the last reported World Bank year. They are useful for forward-looking analysis, but they are not presented as historical results.</p><a href="https://data.imf.org/en/datasets/IMF.RES%3AWEO" target="_blank" rel="noreferrer">Open latest WEO dataset ↗</a></section>
                 <section className="panel method-card"><div className="panel-kicker">03 / GDP LEVEL</div><h2>Current US dollars</h2><p>Nominal GDP is the value of the economy measured at the prices and exchange rates of that year. It can rise because more is produced, because prices rise, or because the exchange rate changes. That is why nominal GDP is not the same as real economic growth.</p></section>
-                <section className="panel method-card"><div className="panel-kicker">04 / ANNUAL CHANGE</div><h2>Consecutive observations</h2><p>We compare one year with the year immediately before it. The result tells you how much the dollar value changed, not how much real production grew. When a year is missing, we leave the comparison blank instead of pretending to know the change.</p></section>
-                <section className="panel method-card"><div className="panel-kicker">05 / CAGR</div><h2>Compound annual rate</h2><p>Compound annual growth rate answers a practical question: if the change had happened at a steady rate each year, what rate would connect the start and end values? It smooths the journey, so it does not show the ups and downs in between.</p></section>
-                <section className="panel method-card"><div className="panel-kicker">06 / INDEXING</div><h2>Common starting point</h2><p>Indexing gives every selected economy the same starting point of 100. It helps compare which economy grew faster over the chosen period, even when one economy started much larger than another.</p></section>
+                <section className="panel method-card"><div className="panel-kicker">04 / ANNUAL CHANGE</div><h2>Consecutive observations</h2><p>We compare one year with the year immediately before it. The result tells you how much the dollar value changed, not how much real production grew. When a year is missing, we leave the comparison blank instead of pretending to know the change.</p><p><code>Annual change = ((GDPₜ / GDPₜ₋₁) − 1) × 100</code></p></section>
+                <section className="panel method-card"><div className="panel-kicker">05 / CAGR</div><h2>Compound annual rate</h2><p>Compound annual growth rate answers a practical question: if the change had happened at a steady rate each year, what rate would connect the start and end values? It smooths the journey, so it does not show the ups and downs in between.</p><p><code>CAGR = ((Ending GDP / Starting GDP)^(1 / n) − 1) × 100</code></p></section>
+                <section className="panel method-card"><div className="panel-kicker">06 / INDEXING</div><h2>Common starting point</h2><p>Indexing gives every selected economy the same starting point of 100. It helps compare which economy grew faster over the chosen period, even when one economy started much larger than another.</p><p><code>Indexₜ = (GDPₜ / GDP₀) × 100</code></p></section>
                 <section className="panel method-card"><div className="panel-kicker">07 / SCENARIOS</div><h2>User-entered assumptions</h2><p>The scenario tool takes the latest reported number and applies the growth rate you choose. It is a simple “what if?” exercise. It does not know future shocks, policy changes, inflation or exchange rates, so it must not be read as an official forecast.</p></section>
                 <section className="panel method-card"><div className="panel-kicker">08 / DATA FRESHNESS</div><h2>Annual releases, refreshed checks</h2><p>GDP is an annual national-accounts measure. The dashboard checks provider feeds periodically and refreshes after new source releases or revisions; it does not imply that GDP observations update minute by minute. The date the source last updated and the time this dashboard retrieved it are shown separately.</p></section>
               </div>
