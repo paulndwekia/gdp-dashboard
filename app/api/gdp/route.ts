@@ -190,8 +190,8 @@ export async function GET(request: Request) {
       return Object.entries(annualValues).flatMap(([rawYear, rawValue]) => {
         const year = Number(rawYear);
         const billionsOfUsd = Number(rawValue);
-        const latestReported = latestWorldBankYear.get(code) || 0;
-        if (!Number.isInteger(year) || year <= latestReported || !Number.isFinite(billionsOfUsd) || billionsOfUsd <= 0) return [];
+        const latestReported = latestWorldBankYear.get(code);
+        if (!latestReported || !Number.isInteger(year) || year <= latestReported || !Number.isFinite(billionsOfUsd) || billionsOfUsd <= 0) return [];
         const growth = Number(growthValues?.[code]?.[rawYear]);
         return [{
           code,
