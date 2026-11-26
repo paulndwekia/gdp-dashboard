@@ -210,7 +210,7 @@ export default function Home() {
 
   useEffect(() => {
     let alive = true;
-    fetch("/api/gdp")
+    fetch("/api/gdp", { signal: AbortSignal.timeout(55000) })
       .then((response) => {
         if (!response.ok) throw new Error("Could not load the live GDP sources.");
         return response.json();
@@ -258,7 +258,9 @@ export default function Home() {
       const currentOutlook = result.outlook.map((row) => row.year).filter((year) => year >= new Date().getFullYear());
       if (currentOutlook.length) setOutlookYear((current) => currentOutlook.includes(current) ? current : Math.min(...currentOutlook));
     } catch (error) {
-      setRefreshMessage(error instanceof Error ? error.message : "Refresh failed.");
+      const message = error instanceof Error ? error.message : "Refresh failed.";
+      setRefreshMessage(message);
+      if (!data) setLoadError(message);
     } finally {
       setRefreshing(false);
     }
@@ -271,6 +273,7 @@ export default function Home() {
         const response = await fetch("/api/gdp?refresh=1", { signal: AbortSignal.timeout(55000) });
         if (!response.ok) throw new Error("Background source check failed.");
         const result = await response.json() as Dataset;
+        if (!result.series?.length) throw new Error("The source returned no GDP observations.");
         setData(result);
         lastCheckRef.current = Date.now();
         setRefreshMessage("Sources checked automatically.");
