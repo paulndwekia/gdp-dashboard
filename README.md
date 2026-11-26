@@ -1,62 +1,47 @@
-# GDP Research — Global Economic Monitor
+# GDP Research Dashboard
 
-An independent GDP research dashboard migrated from the original Streamlit template to **Next.js on Vercel**. The application uses the World Bank GDP (current US$) dataset stored in this repository.
+An independent global economic research dashboard for exploring GDP history, country profiles, comparisons, regional aggregates, growth analytics, rankings, and transparent scenarios.
 
-## Research workspaces
+## Data architecture
 
-- **Overview:** world GDP history, latest world observation and largest national economies.
-- **Country profile:** historical GDP, consecutive-year nominal change and selected-period CAGR.
-- **Compare economies:** nominal GDP levels or indexed paths with each series starting at 100.
-- **Regional monitor:** source-provided regional aggregate series, kept separate from country rows.
-- **Growth analytics:** nominal-change distribution, yearly medians and latest observations.
-- **Rankings:** GDP size, latest annual nominal change or nominal CAGR.
-- **Forecast lab:** simple user-assumption scenarios based on the latest observation.
-- **Methodology:** source coverage, definitions and limitations.
+The dashboard no longer relies on the repository's 2022 CSV as its main data feed.
 
-## Hosting and architecture
+- **Reported historical observations:** World Bank Indicators API, GDP (current US$), `NY.GDP.MKTP.CD`.
+- **Current estimates and forward outlook:** IMF World Economic Outlook DataMapper API, nominal GDP at current prices (`NGDPD`) and real GDP growth (`NGDP_RPCH`).
+- **Separation of evidence:** World Bank observations remain the reported-data series. IMF values beyond each country's latest reported World Bank year appear in a separate estimates-and-projections panel. They are not presented as official actuals.
+- **Refresh cadence:** server-side source responses are cached for up to six hours. The dashboard also provides a manual refresh action.
+- **Fallback behaviour:** if the World Bank API is unavailable, the bundled CSV can be served as a clearly flagged fallback. If the IMF feed is unavailable, the World Bank reported-data layer remains available and a source notice is shown.
 
-- **Hosting:** Vercel.
-- **Framework:** Next.js App Router.
-- **Charts:** Recharts.
-- **Source data:** \`data/gdp_data.csv\`.
-- **Database:** none is connected. The historical dataset is read from this repository and served by the app's own API route.
+The IMF World Economic Outlook is released twice a year. Automatic refresh checks for new data but does not create higher-frequency GDP observations than official sources publish.
 
-This is a standalone project. It does not share application logic, database tables, authentication or runtime services with other applications.
+## Technology
 
-## Local development
+- Next.js App Router
+- React and TypeScript
+- Recharts
+- Vercel deployment
+- Server-side data access through API route handlers
 
-Node.js 20.9 or later is required.
+## Development
 
-\`\`\`bash
+```bash
 npm install
 npm run dev
-\`\`\`
+```
 
-Open http://localhost:3000.
+Open [http://localhost:3000](http://localhost:3000).
 
-## Production build
+Build for deployment:
 
-\`\`\`bash
+```bash
 npm run build
-npm run start
-\`\`\`
+```
 
-## Data
+## Sources
 
-The bundled file contains World Bank GDP (current US$), indicator \`NY.GDP.MKTP.CD\`, with year columns from 1960 through 2022. Individual countries can have shorter coverage or missing years.
+- [World Bank GDP (current US$)](https://data.worldbank.org/indicator/NY.GDP.MKTP.CD)
+- [World Bank Indicators API documentation](https://datahelpdesk.worldbank.org/knowledgebase/articles/898599-indicator-api-queries)
+- [IMF World Economic Outlook dataset](https://data.imf.org/en/datasets/IMF.RES%3AWEO)
+- [IMF DataMapper API](https://www.imf.org/external/datamapper/api/v1/help)
 
-Source: [World Bank Open Data — GDP (current US$)](https://data.worldbank.org/indicator/NY.GDP.MKTP.CD).
-
-## Interpretation notes
-
-- GDP values are **nominal current US dollars**, not inflation-adjusted real GDP.
-- Annual changes may reflect domestic price movements and exchange-rate effects as well as changes in output.
-- Growth is calculated only when both years are present and consecutive. Missing years are not interpolated.
-- Regional and income-group aggregates are kept separate from country rankings.
-- Forecast Lab produces mechanical scenarios from user-entered assumptions; it does not publish official forecasts or predict real GDP.
-
-## Vercel deployment
-
-Import this repository as a separate Vercel project and use the Next.js framework preset. The project root is the repository root. No database environment variables are required for the included historical dataset.
-
-The migration is developed on the \`rebuild/gdp-analytics-dashboard\` branch. The production branch should only be switched after preview validation.
+This is an independent analytical application. It is not an official World Bank or IMF product.
