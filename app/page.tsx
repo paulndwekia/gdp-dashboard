@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import DataExplorer from "./components/DataExplorer";
 import {
   Area,
   AreaChart,
@@ -188,6 +189,7 @@ function Metric({ label, value, footnote, accent = "gold" }: { label: string; va
 export default function Home() {
   const [data, setData] = useState<Dataset | null>(null);
   const [loadError, setLoadError] = useState("");
+  const lastCheckRef = useRef(0);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState("");
   const [outlookYear, setOutlookYear] = useState(new Date().getFullYear());
@@ -214,6 +216,7 @@ export default function Home() {
       .then((result: Dataset) => {
         if (!alive) return;
         setData(result);
+        lastCheckRef.current = Date.now();
         const availableCountries = result.series.filter((row) => !AGGREGATES.has(row.code));
         const kenya = availableCountries.some((row) => row.name === "Kenya");
         const years = availableCountries.map((row) => row.year);
@@ -238,6 +241,7 @@ export default function Home() {
       if (!response.ok) throw new Error("The live data sources did not respond. Please try again.");
       const result = await response.json() as Dataset;
       setData(result);
+      lastCheckRef.current = Date.now();
       setRangeEnd((current) => Math.max(current, result.lastYear));
       if (result.warnings.length) {
         setRefreshMessage("Some feeds are unavailable. Source status is shown below.");
@@ -252,6 +256,32 @@ export default function Home() {
       setRefreshing(false);
     }
   }
+
+  useEffect(() => {
+    const checkSources = async () => {
+      if (document.visibilityState !== "visible") return;
+      try {
+        const response = await fetch("/api/gdp?refresh=1");
+        if (!response.ok) throw new Error("Background source check failed.");
+        const result = await response.json() as Dataset;
+        setData(result);
+        lastCheckRef.current = Date.now();
+        setRefreshMessage("Sources checked automatically.");
+      } catch {
+        // A temporary source outage must not replace the last successful observations.
+        setRefreshMessage("Automatic source check could not complete. Showing the last successful data.");
+      }
+    };
+    const timer = window.setInterval(checkSources, 6 * 60 * 60 * 1000);
+    const onFocus = () => {
+      if (Date.now() - lastCheckRef.current >= 6 * 60 * 60 * 1000) void checkSources();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, []);
 
   const rows = data?.series || [];
   const countryRows = useMemo(() => rows.filter((row) => !AGGREGATES.has(row.code)), [rows]);
@@ -490,6 +520,29 @@ export default function Home() {
 
           {active === "Overview" && (
             <>
+              <section className="panel source-freshness-panel">
+                <div className="panel-header">
+                  <div><div className="panel-kicker">SOURCE FRESHNESS</div><h2>When the source data last changed</h2></div>
+                  <span className="panel-unit">CHECKED EVERY 6 HOURS</span>
+                </div>
+                <div className="freshness-grid">
+                  <div>
+                    <span className="freshness-label">WORLD BANK · REPORTED GDP</span>
+                    <strong>{data.worldBankLastUpdated || "Update date not supplied"}</strong>
+                    <small>{data.worldBankStatus === "live" ? "Live source connected" : "Using a clearly flagged local fallback"} · Latest reported observation year: {data.lastYear}</small>
+                  </div>
+                  <div>
+                    <span className="freshness-label">IMF · OUTLOOK</span>
+                    <strong>{data.outlookEdition}</strong>
+                    <small>{data.imfLastModified ? "Indicator last modified " + data.imfLastModified : "Release date shown by the source vintage"} · Estimates and projections are kept separate from reported data</small>
+                  </div>
+                  <div>
+                    <span className="freshness-label">THIS DASHBOARD</span>
+                    <strong>{new Date(data.checkedAt || data.updatedAt).toLocaleString("en-KE", { dateStyle: "medium", timeStyle: "short" })}</strong>
+                    <small>Last successful check of the official source feeds</small>
+                  </div>
+                </div>
+              </section>
               <div className="metric-grid">
                 <Metric label="WORLD GDP · LATEST" value={money(latestWorld?.gdp)} footnote={"Recorded in " + (latestWorld?.year || "—")} />
                 <Metric label="ANNUAL NOMINAL CHANGE" value={percent(worldChange)} footnote="Latest consecutive years" accent="teal" />
@@ -755,11 +808,11 @@ export default function Home() {
               <div className="method-grid">
                 <section className="panel method-card"><div className="panel-kicker">01 / WHERE THE NUMBERS COME FROM</div><h2>Start with the original source</h2><p>For the historical record, we go straight to the World Bank. Its GDP series is called <code>NY.GDP.MKTP.CD</code>. We pull the latest release, keep the year attached to every figure, and do not fill missing years with guesses.</p><a href="https://data.worldbank.org/indicator/NY.GDP.MKTP.CD" target="_blank" rel="noreferrer">See the World Bank GDP series ↗</a></section>
                 <section className="panel method-card"><div className="panel-kicker">02 / ESTIMATES & PROJECTIONS</div><h2>IMF World Economic Outlook</h2><p>The IMF publishes a separate outlook. We use it to show the latest estimates and future projections when they go beyond the last reported World Bank year. These figures are useful for forward-looking analysis, but they are not presented as historical results.</p><a href="https://data.imf.org/en/datasets/IMF.RES%3AWEO" target="_blank" rel="noreferrer">Open latest WEO dataset ↗</a></section>
-                <section className="panel method-card"><div className="panel-kicker">02 / GDP LEVEL</div><h2>Current US dollars</h2><p>Nominal GDP is the value of the economy measured at the prices and exchange rates of that year. It can rise because more is produced, because prices rise, or because the exchange rate changes. That is why nominal GDP is not the same as real economic growth.</p></section>
-                <section className="panel method-card"><div className="panel-kicker">03 / ANNUAL CHANGE</div><h2>Consecutive observations</h2><p>We compare one year with the year immediately before it. The result tells you how much the dollar value changed, not how much real production grew. When a year is missing, we leave the comparison blank instead of pretending to know the change.</p></section>
-                <section className="panel method-card"><div className="panel-kicker">04 / CAGR</div><h2>Compound annual rate</h2><p>Compound annual growth rate answers a practical question: if the change had happened at a steady rate each year, what rate would connect the start and end values? It smooths the journey, so it does not show the ups and downs in between.</p></section>
-                <section className="panel method-card"><div className="panel-kicker">05 / INDEXING</div><h2>Common starting point</h2><p>Indexing gives every selected economy the same starting point of 100. It helps compare which economy grew faster over the chosen period, even when one economy started much larger than another.</p></section>
-                <section className="panel method-card"><div className="panel-kicker">06 / SCENARIOS</div><h2>User-entered assumptions</h2><p>The scenario tool takes the latest reported number and applies the growth rate you choose. It is a simple “what if?” exercise. It does not know future shocks, policy changes, inflation or exchange rates, so it must not be read as an official forecast.</p></section>
+                <section className="panel method-card"><div className="panel-kicker">03 / GDP LEVEL</div><h2>Current US dollars</h2><p>Nominal GDP is the value of the economy measured at the prices and exchange rates of that year. It can rise because more is produced, because prices rise, or because the exchange rate changes. That is why nominal GDP is not the same as real economic growth.</p></section>
+                <section className="panel method-card"><div className="panel-kicker">04 / ANNUAL CHANGE</div><h2>Consecutive observations</h2><p>We compare one year with the year immediately before it. The result tells you how much the dollar value changed, not how much real production grew. When a year is missing, we leave the comparison blank instead of pretending to know the change.</p></section>
+                <section className="panel method-card"><div className="panel-kicker">05 / CAGR</div><h2>Compound annual rate</h2><p>Compound annual growth rate answers a practical question: if the change had happened at a steady rate each year, what rate would connect the start and end values? It smooths the journey, so it does not show the ups and downs in between.</p></section>
+                <section className="panel method-card"><div className="panel-kicker">06 / INDEXING</div><h2>Common starting point</h2><p>Indexing gives every selected economy the same starting point of 100. It helps compare which economy grew faster over the chosen period, even when one economy started much larger than another.</p></section>
+                <section className="panel method-card"><div className="panel-kicker">07 / SCENARIOS</div><h2>User-entered assumptions</h2><p>The scenario tool takes the latest reported number and applies the growth rate you choose. It is a simple “what if?” exercise. It does not know future shocks, policy changes, inflation or exchange rates, so it must not be read as an official forecast.</p></section>
               </div>
               <section className="panel source-panel"><div className="panel-kicker">DATA QUALITY & LIMITATIONS</div><h2>What the dashboard does — and does not — claim</h2><ul><li>Country rankings exclude source aggregates such as regional and income groups.</li><li>Every series uses its own latest available year; countries can have different coverage.</li><li>Missing observations remain missing. The application does not silently fill gaps.</li><li>Nominal changes in current US dollars are not inflation-adjusted real GDP growth.</li><li>Reported observations are pulled directly from the World Bank API. The IMF outlook is displayed separately because current-year estimates and future projections are not reported actual GDP.</li></ul></section>
             </>
