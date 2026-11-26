@@ -24,6 +24,7 @@ type Observation = {
   gdp: number;
 };
 
+type OutlookObservation = Observation & { realGrowth?: number | null };
 type Dataset = {
   source: string;
   indicator: string;
@@ -31,6 +32,19 @@ type Dataset = {
   firstYear: number;
   lastYear: number;
   series: Observation[];
+  outlook: OutlookObservation[];
+  outlookSource: string;
+  outlookIndicator: string;
+  outlookUnit: string;
+  outlookEdition: string;
+  outlookLastYear: number | null;
+  growthIndicator: string;
+  growthDefinition: string;
+  updatedAt: string;
+  refreshIntervalHours: number;
+  worldBankStatus: "live" | "fallback";
+  imfStatus: "live" | "unavailable";
+  warnings: string[];
 };
 
 type PageKey =
@@ -169,6 +183,9 @@ function Metric({ label, value, footnote, accent = "gold" }: { label: string; va
 export default function Home() {
   const [data, setData] = useState<Dataset | null>(null);
   const [loadError, setLoadError] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMessage, setRefreshMessage] = useState("");
+  const [outlookYear, setOutlookYear] = useState(new Date().getFullYear());
   const [active, setActive] = useState<PageKey>("Overview");
   const [navQuery, setNavQuery] = useState("");
   const [country, setCountry] = useState("Kenya");
@@ -186,25 +203,50 @@ export default function Home() {
     let alive = true;
     fetch("/api/gdp")
       .then((response) => {
-        if (!response.ok) throw new Error("Could not load the GDP dataset.");
+        if (!response.ok) throw new Error("Could not load the live GDP sources.");
         return response.json();
       })
       .then((result: Dataset) => {
         if (!alive) return;
         setData(result);
-        const countryRows = result.series.filter((row) => !AGGREGATES.has(row.code));
-        const kenya = countryRows.some((row) => row.name === "Kenya");
-        const years = countryRows.map((row) => row.year);
-        setCountry(kenya ? "Kenya" : (countryRows[0]?.name || ""));
+        const availableCountries = result.series.filter((row) => !AGGREGATES.has(row.code));
+        const kenya = availableCountries.some((row) => row.name === "Kenya");
+        const years = availableCountries.map((row) => row.year);
+        setCountry(kenya ? "Kenya" : (availableCountries[0]?.name || ""));
         setRangeEnd(Math.max(...years));
         setRangeStart(Math.max(Math.min(...years), Math.max(...years) - 22));
         setRankYearStart(Math.max(Math.min(...years), Math.max(...years) - 10));
+        const currentOutlook = result.outlook.map((row) => row.year).filter((year) => year >= new Date().getFullYear());
+        if (currentOutlook.length) setOutlookYear(Math.min(...currentOutlook));
       })
       .catch((error) => {
         if (alive) setLoadError(error instanceof Error ? error.message : "Dataset loading failed.");
       });
     return () => { alive = false; };
   }, []);
+
+  async function refreshDataset() {
+    setRefreshing(true);
+    setRefreshMessage("");
+    try {
+      const response = await fetch("/api/gdp?refresh=1");
+      if (!response.ok) throw new Error("The live data sources did not respond. Please try again.");
+      const result = await response.json() as Dataset;
+      setData(result);
+      setRangeEnd((current) => Math.max(current, result.lastYear));
+      if (result.warnings.length) {
+        setRefreshMessage("Some feeds are unavailable. Source status is shown below.");
+      } else {
+        setRefreshMessage("Sources checked successfully.");
+      }
+      const currentOutlook = result.outlook.map((row) => row.year).filter((year) => year >= new Date().getFullYear());
+      if (currentOutlook.length) setOutlookYear((current) => currentOutlook.includes(current) ? current : Math.min(...currentOutlook));
+    } catch (error) {
+      setRefreshMessage(error instanceof Error ? error.message : "Refresh failed.");
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   const rows = data?.series || [];
   const countryRows = useMemo(() => rows.filter((row) => !AGGREGATES.has(row.code)), [rows]);
@@ -228,6 +270,17 @@ export default function Home() {
     ? cagr(worldStart.gdp, latestWorld.gdp, latestWorld.year - worldStart.year)
     : null;
   const topEconomies = [...latestCountries].sort((a, b) => b.gdp - a.gdp).slice(0, 10);
+  const outlookYears = useMemo(
+    () => Array.from(new Set((data?.outlook || []).map((row) => row.year))).sort((a, b) => a - b),
+    [data?.outlook]
+  );
+  const selectedOutlook = useMemo(
+    () => (data?.outlook || [])
+      .filter((row) => row.year === outlookYear && !AGGREGATES.has(row.code))
+      .sort((a, b) => b.gdp - a.gdp)
+      .slice(0, 12),
+    [data?.outlook, outlookYear]
+  );
 
   const activeCountryRows = useMemo(
     () => countryRows.filter((row) => row.name === country && row.year >= rangeStart && row.year <= rangeEnd).sort((a, b) => a.year - b.year),
@@ -389,7 +442,7 @@ export default function Home() {
         </nav>
         <div className="sidebar-foot">
           <div className="source-line">SOURCE</div>
-          <div>World Bank Open Data</div>
+          <div>World Bank + IMF WEO</div>
           <div className="sidebar-range">{data.firstYear} — {data.lastYear}</div>
           <div className="sidebar-separation">Independent project · Separate data</div>
         </div>
@@ -409,10 +462,14 @@ export default function Home() {
             </select>
           </label>
           <div className="topbar-right">
-            <span className="status-dot" />
-            <span>Historical dataset</span>
+            <span className={"status-dot" + (data.worldBankStatus === "live" && data.imfStatus === "live" ? "" : " warning")} />
+            <span>Live sources</span>
             <span className="topbar-divider" />
-            <span>Current US$</span>
+            <span>Updated {new Date(data.updatedAt).toLocaleString("en-KE", { dateStyle: "medium", timeStyle: "short" })}</span>
+            <button className="refresh-button" onClick={refreshDataset} disabled={refreshing}>
+              <span className={refreshing ? "refresh-symbol spinning" : "refresh-symbol"}>↻</span>
+              {refreshing ? "Refreshing…" : "Refresh"}
+            </button>
           </div>
         </header>
 
@@ -473,6 +530,49 @@ export default function Home() {
                 </section>
               </div>
 
+              <section className="panel outlook-panel">
+                <div className="panel-header panel-header-wrap">
+                  <div>
+                    <div className="panel-kicker">CURRENT OUTLOOK · IMF WEO</div>
+                    <h2>Nominal GDP estimates & projections</h2>
+                    <p className="outlook-subtitle">{data.outlookEdition} · Published estimates and projections, not real-time readings</p>
+                  </div>
+                  <div className="inline-select">
+                    <label htmlFor="outlook-year">OUTLOOK YEAR</label>
+                    <select id="outlook-year" value={String(outlookYear)} onChange={(event) => setOutlookYear(Number(event.target.value))}>
+                      {outlookYears.map((year) => <option key={year} value={year}>{year}{year === new Date().getFullYear() ? " · current-year estimate" : year > new Date().getFullYear() ? " · projection" : ""}</option>)}
+                    </select>
+                  </div>
+                </div>
+                {selectedOutlook.length ? (
+                  <>
+                    <div className="chart-wrap tall">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={[...selectedOutlook].reverse()} layout="vertical" margin={{ left: 8, right: 18, top: 4, bottom: 4 }}>
+                          <CartesianGrid stroke="#E0E9E3" horizontal={false} />
+                          <XAxis type="number" tickFormatter={tickMoney} tick={{ fill: "#718176", fontSize: 10 }} tickLine={false} axisLine={false} />
+                          <YAxis type="category" dataKey="name" width={140} tick={{ fill: "#47584D", fontSize: 11 }} tickLine={false} axisLine={false} />
+                          <Tooltip formatter={(value: any) => money(Number(value))} />
+                          <Bar dataKey="gdp" name="GDP estimate / projection" fill="#14804A" barSize={14} radius={[0, 3, 3, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="table-wrap">
+                      <table>
+                        <thead><tr><th>ECONOMY</th><th>YEAR</th><th>GDP · CURRENT US$</th><th>IMF REAL GDP GROWTH</th></tr></thead>
+                        <tbody>{selectedOutlook.map((row) => <tr key={row.code}><td>{row.name}</td><td>{row.year}</td><td>{money(row.gdp)}</td><td>{percent(row.realGrowth)}</td></tr>)}</tbody>
+                      </table>
+                    </div>
+                  </>
+                ) : (
+                  <p className="chart-note">The IMF outlook feed is temporarily unavailable for this year. Use Refresh to check the source again.</p>
+                )}
+                <p className="chart-note">Annual GDP at current prices. IMF values are shown separately from World Bank reported observations. Real GDP growth is the IMF indicator NGDP_RPCH and is not nominal GDP growth.</p>
+              </section>
+              {data.warnings.length > 0 && (
+                <div className="method-strip warning"><strong>Source notice</strong><span>{data.warnings.join(" ")}</span></div>
+              )}
+              {refreshMessage && <p className="refresh-message" role="status">{refreshMessage}</p>}
               <section className="panel">
                 <div className="panel-header panel-header-wrap">
                   <div><div className="panel-kicker">COUNTRY COMPARISON</div><h2>How major economies have evolved</h2></div>
@@ -641,8 +741,9 @@ export default function Home() {
           {active === "Methodology" && (
             <>
               <div className="method-grid">
-                <section className="panel method-card"><div className="panel-kicker">01 / SOURCE</div><h2>World Bank GDP</h2><p>The repository contains the World Bank GDP (current US$) series, indicator <code>NY.GDP.MKTP.CD</code>, with annual columns from 1960 through 2022.</p><a href="https://data.worldbank.org/indicator/NY.GDP.MKTP.CD" target="_blank" rel="noreferrer">Open source indicator ↗</a></section>
-                <section className="panel method-card"><div className="panel-kicker">02 / GDP LEVEL</div><h2>Current US dollars</h2><p>The source reports nominal GDP translated into current US dollars. These values include price-level changes and exchange-rate movements.</p></section>
+                <section className="panel method-card"><div className="panel-kicker">01 / REPORTED DATA</div><h2>World Bank GDP</h2><p>The dashboard requests the latest available annual country and regional observations for GDP (current US$), indicator <code>NY.GDP.MKTP.CD</code>, directly from the World Bank API. It retains the full historical series.</p><a href="https://data.worldbank.org/indicator/NY.GDP.MKTP.CD" target="_blank" rel="noreferrer">Open source indicator ↗</a></section>
+                <section className="panel method-card"><div className="panel-kicker">02 / ESTIMATES & PROJECTIONS</div><h2>IMF World Economic Outlook</h2><p>The dashboard separately retrieves IMF nominal GDP at current prices (<code>NGDPD</code>) and real GDP growth (<code>NGDP_RPCH</code>). Later years are labelled as estimates or projections and are not treated as reported actuals.</p><a href="https://data.imf.org/en/datasets/IMF.RES%3AWEO" target="_blank" rel="noreferrer">Open latest WEO dataset ↗</a></section>
+                <section className="panel method-card"><div className="panel-kicker">02 / GDP LEVEL</div><h2>Current US dollars</h2><p>The source reports nominal GDP translated into current US dollars. These values include price-level changes and exchange-rate movements. Values remain subject to release and revision schedules.</p></section>
                 <section className="panel method-card"><div className="panel-kicker">03 / ANNUAL CHANGE</div><h2>Consecutive observations</h2><p>Annual nominal change is calculated as (GDP in year t ÷ GDP in year t−1 − 1) × 100. Missing years are not interpolated.</p></section>
                 <section className="panel method-card"><div className="panel-kicker">04 / CAGR</div><h2>Compound annual rate</h2><p>CAGR is (ending value ÷ starting value) raised to 1 ÷ elapsed years, minus 1. The selected endpoints are the first and last available observations in the period.</p></section>
                 <section className="panel method-card"><div className="panel-kicker">05 / INDEXING</div><h2>Common starting point</h2><p>Indexed GDP divides each country's observations by its own first available value and multiplies by 100. It compares paths, not absolute economic size.</p></section>
@@ -654,7 +755,7 @@ export default function Home() {
 
           <footer className="page-footer">
             <span>GDP Research · Independent economic analysis</span>
-            <span>Source: World Bank Open Data · GDP current US$</span>
+            <span>Reported data: World Bank · Outlook: IMF World Economic Outlook</span>
           </footer>
         </div>
       </main>
