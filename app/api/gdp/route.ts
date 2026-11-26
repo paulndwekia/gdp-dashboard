@@ -107,7 +107,7 @@ function extractImfSdmxValues(payload: unknown, indicator: string): Record<strin
       const period = periods[Number(periodIndex)];
       const year = String(period?.value || period?.id || "");
       const value = Number(Array.isArray(tuple) ? tuple[0] : tuple);
-      if (!/^\\d{4}$/.test(year) || !Number.isFinite(value)) continue;
+      if (!/^\d{4}$/.test(year) || !Number.isFinite(value)) continue;
       (values[countryCode] ||= {})[year] = value;
     }
   }
