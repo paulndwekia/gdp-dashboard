@@ -15,13 +15,15 @@ type Observation = {
 };
 
 const WORLD_BANK_INDICATOR = "NY.GDP.MKTP.CD";
-const IMF_BASE = "https://www.imf.org/external/datamapper/api/v1";
+const IMF_BASE = "https://www.imf.org/external/datamapper/api/v2";
 const REFRESH_SECONDS = 6 * 60 * 60;
 
-async function getJson(url: string, forceRefresh: boolean) {
+async function getJson(url: string, forceRefresh: boolean, revalidate = REFRESH_SECONDS) {
   const response = await fetch(
     url,
-    forceRefresh ? { cache: "no-store" } : { next: { revalidate: REFRESH_SECONDS } }
+    forceRefresh
+      ? { cache: "no-store", signal: AbortSignal.timeout(20000) }
+      : { next: { revalidate }, signal: AbortSignal.timeout(20000) }
   );
   if (!response.ok) {
     throw new Error(`Source request failed (${response.status}): ${url}`);
@@ -38,8 +40,14 @@ function labelForCountry(meta: unknown, fallback: string) {
   return fallback;
 }
 
+function indicatorMetadata(payload: unknown, indicator: string) {
+  if (!payload || typeof payload !== "object") return undefined;
+  const root = payload as JsonRecord;
+  return root.indicators?.[indicator] || root.data?.indicators?.[indicator] || root[indicator];
+}
+
 function sourceEdition(meta: unknown) {
-  if (!meta || typeof meta !== "object") return "Latest IMF World Economic Outlook vintage";
+  if (!meta || typeof meta !== "object") return "IMF World Economic Outlook vintage";
   const value = meta as JsonRecord;
   const text = [
     value.source,
@@ -49,7 +57,48 @@ function sourceEdition(meta: unknown) {
     value.label,
   ].map((part) => typeof part === "string" ? part : JSON.stringify(part || "")).join(" ");
   const match = text.match(/(April|October)\s+20\d{2}/i);
-  return match ? `${match[1]} ${match[0].split(/\s+/).pop()} World Economic Outlook` : "Latest IMF World Economic Outlook vintage";
+  return match ? `${match[1]} ${match[0].split(/\s+/).pop()} World Economic Outlook` : String(value.source || "IMF World Economic Outlook vintage");
+}
+
+function countryLabel(payload: unknown, code: string, fallback: string) {
+  if (!payload || typeof payload !== "object") return fallback;
+  const root = payload as JsonRecord;
+  const entry = root.countries?.[code] || root.data?.countries?.[code] || root[code];
+  return labelForCountry(entry, fallback);
+}
+
+async function fetchWorldBankSeries(forceRefresh: boolean) {
+  const rows: Observation[] = [];
+  let lastUpdated: string | null = null;
+  let page = 1;
+  let totalPages = 1;
+
+  while (page <= totalPages && page <= 8) {
+    const url = `https://api.worldbank.org/v2/country/all/indicator/${WORLD_BANK_INDICATOR}?format=json&per_page=20000&date=1960:2035&page=${page}`;
+    const payload = await getJson(url, forceRefresh);
+    if (!Array.isArray(payload) || !Array.isArray(payload[1])) {
+      throw new Error("World Bank returned an unexpected GDP response.");
+    }
+    const metadata = payload[0] as JsonRecord;
+    totalPages = Math.max(1, Number(metadata.pages) || 1);
+    lastUpdated = metadata.lastupdated || lastUpdated;
+
+    rows.push(...(payload[1] as JsonRecord[]).flatMap((record) => {
+      const code = String(record.countryiso3code || "").trim().toUpperCase();
+      const name = String(record.country?.value || "").trim();
+      const year = Number(record.date);
+      const gdp = record.value === null || record.value === undefined ? NaN : Number(record.value);
+      if (!code || !name || !Number.isInteger(year) || !Number.isFinite(gdp) || gdp <= 0) return [];
+      return [{ code, name, year, gdp }];
+    }));
+    page += 1;
+  }
+
+  if (!rows.length) throw new Error("World Bank returned no usable GDP observations.");
+  return {
+    rows: rows.sort((a, b) => a.code.localeCompare(b.code) || a.year - b.year),
+    lastUpdated,
+  };
 }
 
 async function readBundledFallback(): Promise<Observation[]> {
@@ -80,26 +129,6 @@ async function readBundledFallback(): Promise<Observation[]> {
   });
 }
 
-async function fetchWorldBankSeries(forceRefresh: boolean) {
-  const url = `https://api.worldbank.org/v2/country/all/indicator/${WORLD_BANK_INDICATOR}?format=json&per_page=20000&date=1960:2035`;
-  const payload = await getJson(url, forceRefresh);
-  if (!Array.isArray(payload) || !Array.isArray(payload[1])) {
-    throw new Error("World Bank returned an unexpected GDP response.");
-  }
-
-  const rows = (payload[1] as JsonRecord[]).flatMap((record) => {
-    const code = String(record.countryiso3code || "").trim().toUpperCase();
-    const name = String(record.country?.value || "").trim();
-    const year = Number(record.date);
-    const gdp = Number(record.value);
-    if (!code || !name || !Number.isInteger(year) || !Number.isFinite(gdp) || gdp <= 0) return [];
-    return [{ code, name, year, gdp }];
-  });
-
-  if (!rows.length) throw new Error("World Bank returned no usable GDP observations.");
-  return rows.sort((a, b) => a.code.localeCompare(b.code) || a.year - b.year);
-}
-
 function extractImfValues(payload: unknown, indicator: string) {
   if (!payload || typeof payload !== "object") return {} as Record<string, Record<string, number>>;
   const values = (payload as JsonRecord).values;
@@ -114,20 +143,22 @@ export async function GET(request: Request) {
   const warnings: string[] = [];
   let series: Observation[] = [];
   let worldBankStatus: "live" | "fallback" = "live";
+  let worldBankLastUpdated: string | null = null;
 
   try {
-    series = await fetchWorldBankSeries(forceRefresh);
+    const liveWorldBank = await fetchWorldBankSeries(forceRefresh);
+    series = liveWorldBank.rows;
+    worldBankLastUpdated = liveWorldBank.lastUpdated;
   } catch (error) {
     worldBankStatus = "fallback";
     warnings.push(error instanceof Error ? error.message : "World Bank data could not be reached.");
     series = await readBundledFallback();
   }
 
-  const [imfGdpResult, imfGrowthResult, imfCountriesResult, imfCatalogResult] = await Promise.allSettled([
+  const [imfGdpResult, imfGrowthResult, imfCountriesResult] = await Promise.allSettled([
     getJson(`${IMF_BASE}/NGDPD`, forceRefresh),
     getJson(`${IMF_BASE}/NGDP_RPCH`, forceRefresh),
     getJson(`${IMF_BASE}/countries`, forceRefresh),
-    getJson(`${IMF_BASE}/indicators`, forceRefresh),
   ]);
 
   let outlook: Observation[] = [];
@@ -142,10 +173,8 @@ export async function GET(request: Request) {
     const countryCatalog = imfCountriesResult.status === "fulfilled"
       ? (imfCountriesResult.value as JsonRecord)
       : {};
-    const indicatorCatalog = imfCatalogResult.status === "fulfilled"
-      ? (imfCatalogResult.value as JsonRecord)
-      : {};
-    imfEdition = sourceEdition(indicatorCatalog?.NGDPD);
+    const indicatorMeta = indicatorMetadata(imfGdpResult.value, "NGDPD");
+    imfEdition = sourceEdition(indicatorMeta);
 
     const latestWorldBankYear = new Map<string, number>();
     const worldBankNames = new Map<string, string>();
@@ -157,7 +186,7 @@ export async function GET(request: Request) {
     outlook = Object.entries(gdpValues).flatMap(([rawCode, annualValues]) => {
       const code = rawCode.toUpperCase();
       if (!/^[A-Z]{3}$/.test(code) || !annualValues || typeof annualValues !== "object") return [];
-      const name = labelForCountry(countryCatalog?.[code], worldBankNames.get(code) || code);
+      const name = countryLabel(countryCatalog, code, worldBankNames.get(code) || code);
       return Object.entries(annualValues).flatMap(([rawYear, rawValue]) => {
         const year = Number(rawYear);
         const billionsOfUsd = Number(rawValue);
@@ -181,9 +210,7 @@ export async function GET(request: Request) {
   const years = series.map((row) => row.year);
   const lastYear = Math.max(...years);
   const latestOutlookYear = outlook.length ? Math.max(...outlook.map((row) => row.year)) : null;
-  const edition = imfEdition === "Latest IMF World Economic Outlook vintage"
-    ? imfEdition
-    : imfEdition;
+  const imfLastModified = String((indicatorMetadata(imfGdpResult.status === "fulfilled" ? imfGdpResult.value : null, "NGDPD") as JsonRecord | undefined)?.["last-modified"] || "") || null;
 
   return Response.json(
     {
@@ -197,11 +224,14 @@ export async function GET(request: Request) {
       outlookSource: "International Monetary Fund · World Economic Outlook",
       outlookIndicator: "NGDPD",
       outlookUnit: "billions of current US dollars, converted to US dollars",
-      outlookEdition: edition,
+      outlookEdition: imfEdition,
       outlookLastYear: latestOutlookYear,
       growthIndicator: "NGDP_RPCH",
       growthDefinition: "Real GDP growth, annual percent change",
       updatedAt: new Date().toISOString(),
+      checkedAt: new Date().toISOString(),
+      worldBankLastUpdated,
+      imfLastModified,
       refreshIntervalHours: REFRESH_SECONDS / 3600,
       worldBankStatus,
       imfStatus,
