@@ -12,12 +12,22 @@ type Observation = {
   name: string;
   year: number;
   gdp: number;
+  isAggregate?: boolean;
   realGrowth?: number | null;
 };
 
 const WORLD_BANK_INDICATOR = "NY.GDP.MKTP.CD";
 const IMF_BASE = "https://www.imf.org/external/datamapper/api/v2";
 const REFRESH_SECONDS = 6 * 60 * 60;
+
+// Used only if the World Bank country catalogue is temporarily unavailable.
+const KNOWN_AGGREGATE_CODES = new Set([
+  "AFE", "AFW", "ARB", "CEB", "CSS", "EAP", "EAS", "ECS", "EMU", "EUU",
+  "FCS", "HIC", "IBD", "IBT", "IDA", "IDB", "IDX", "LAC", "LCN", "LDC",
+  "LIC", "LMC", "LMY", "MEA", "MIC", "MNA", "NAC", "OED", "OSS", "PRE",
+  "PSS", "PST", "SAS", "SSA", "SSF", "SST", "TEA", "TEC", "TLA", "TMN",
+  "TSA", "TSS", "UMC", "WLD",
+]);
 
 async function getJson(url: string, forceRefresh: boolean, revalidate = REFRESH_SECONDS, timeoutMs = 20000) {
   const response = await fetch(
@@ -78,10 +88,27 @@ async function fetchWorldBankSeries(forceRefresh: boolean) {
     return getJson(url, forceRefresh);
   };
 
-  const firstPayload = await fetchPage(1);
+  const [firstPayload, countryCatalogPayload] = await Promise.all([
+    fetchPage(1),
+    getJson("https://api.worldbank.org/v2/country?format=json&per_page=400", forceRefresh, 86400, 8000).catch(() => null),
+  ]);
   if (!Array.isArray(firstPayload) || !Array.isArray(firstPayload[1])) {
     throw new Error("World Bank returned an unexpected GDP response.");
   }
+
+  const aggregateCodes = new Set<string>(KNOWN_AGGREGATE_CODES);
+  if (Array.isArray(countryCatalogPayload) && Array.isArray(countryCatalogPayload[1])) {
+    for (const country of countryCatalogPayload[1] as JsonRecord[]) {
+      const code = String(country.id || "").trim().toUpperCase();
+      // World Bank assigns region "NA" to regional, income and other aggregate groups.
+      if (/^[A-Z0-9]{3}$/.test(code) && String(country.region?.id || "").toUpperCase() === "NA") {
+        aggregateCodes.add(code);
+      } else if (/^[A-Z0-9]{3}$/.test(code)) {
+        aggregateCodes.delete(code);
+      }
+    }
+  }
+
   const firstMeta = firstPayload[0] as JsonRecord;
   const totalPages = Math.max(1, Number(firstMeta.pages) || 1);
   if (totalPages > 12) {
@@ -107,7 +134,7 @@ async function fetchWorldBankSeries(forceRefresh: boolean) {
       const gdp = record.value === null || record.value === undefined ? NaN : Number(record.value);
       const observationStatus = String(record.obs_status || "").toUpperCase();
       if (observationStatus === "F" || !code || !name || !Number.isInteger(year) || !Number.isFinite(gdp) || gdp <= 0) return [];
-      return [{ code, name, year, gdp }];
+      return [{ code, name, year, gdp, isAggregate: aggregateCodes.has(code) }];
     }));
   }
 
@@ -115,6 +142,7 @@ async function fetchWorldBankSeries(forceRefresh: boolean) {
   return {
     rows: rows.sort((a, b) => a.code.localeCompare(b.code) || a.year - b.year),
     lastUpdated,
+    aggregateCodes,
   };
 }
 async function readBundledFallback(): Promise<Observation[]> {
@@ -140,7 +168,9 @@ async function readBundledFallback(): Promise<Observation[]> {
       const raw = record[String(year)];
       if (raw === undefined || raw === null || raw === "") return [];
       const gdp = Number(raw);
-      return Number.isFinite(gdp) && gdp > 0 ? [{ code, name, year, gdp }] : [];
+      return Number.isFinite(gdp) && gdp > 0
+        ? [{ code, name, year, gdp, isAggregate: KNOWN_AGGREGATE_CODES.has(code) }]
+        : [];
     });
   });
 }
@@ -203,14 +233,16 @@ export async function GET(request: Request) {
 
     const latestWorldBankYear = new Map<string, number>();
     const worldBankNames = new Map<string, string>();
+    const actualCountryCodes = new Set<string>();
     for (const row of series) {
       latestWorldBankYear.set(row.code, Math.max(latestWorldBankYear.get(row.code) || 0, row.year));
       worldBankNames.set(row.code, row.name);
+      if (!row.isAggregate) actualCountryCodes.add(row.code);
     }
 
     outlook = Object.entries(gdpValues).flatMap(([rawCode, annualValues]) => {
       const code = rawCode.toUpperCase();
-      if (!/^[A-Z]{3}$/.test(code) || !annualValues || typeof annualValues !== "object") return [];
+      if (!/^[A-Z]{3}$/.test(code) || !actualCountryCodes.has(code) || !annualValues || typeof annualValues !== "object") return [];
       const name = countryLabel(countryCatalog, code, worldBankNames.get(code) || code);
       return Object.entries(annualValues).flatMap(([rawYear, rawValue]) => {
         const year = Number(rawYear);
@@ -224,6 +256,7 @@ export async function GET(request: Request) {
           year,
           gdp: billionsOfUsd * 1_000_000_000,
           realGrowth: Number.isFinite(growth) ? growth : null,
+          isAggregate: false,
         }];
       });
     }).sort((a, b) => a.code.localeCompare(b.code) || a.year - b.year);
