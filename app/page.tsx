@@ -199,6 +199,7 @@ export default function Home() {
   const [rangeStart, setRangeStart] = useState(2000);
   const [rangeEnd, setRangeEnd] = useState(2022);
   const [compareNames, setCompareNames] = useState<string[]>(["Kenya", "United States", "China", "India"]);
+  const [compareSearch, setCompareSearch] = useState("");
   const [compareMode, setCompareMode] = useState<"level" | "index">("level");
   const [regionCodes, setRegionCodes] = useState<string[]>(["AFE", "AFW", "EAS", "ECS", "LCN", "SAS"]);
   const [rankMode, setRankMode] = useState<"size" | "change" | "cagr">("size");
@@ -291,6 +292,10 @@ export default function Home() {
     [countryRows]
   );
   const latestCountries = useMemo(() => latestByCode(countryRows), [countryRows]);
+  const visibleCompareCountries = useMemo(
+    () => countryNames.filter((name) => name.toLowerCase().includes(compareSearch.trim().toLowerCase())),
+    [countryNames, compareSearch]
+  );
   const worldRows = useMemo(
     () => aggregateRows.filter((row) => row.code === "WLD").sort((a, b) => a.year - b.year),
     [aggregateRows]
@@ -638,7 +643,7 @@ export default function Home() {
                 <div className="panel-header panel-header-wrap">
                   <div><div className="panel-kicker">COUNTRY COMPARISON</div><h2>How major economies have evolved</h2></div>
                   <div className="inline-select"><label htmlFor="overview-countries">Select economies</label>
-                    <select id="overview-countries" multiple value={compareNames} onChange={(event) => setCompareNames(Array.from(event.target.selectedOptions, (option) => option.value))}>
+                    <select id="overview-countries" multiple value={compareNames} onChange={(event) => setCompareNames(Array.from(event.target.selectedOptions, (option) => option.value).slice(0, 8))}>
                       {countryNames.map((name) => <option key={name} value={name}>{name}</option>)}
                     </select>
                   </div>
@@ -668,6 +673,7 @@ export default function Home() {
                 <div className="filter-field"><label htmlFor="profile-start">FROM YEAR · {rangeStart}</label><input id="profile-start" type="range" min={yearMin} max={rangeEnd} value={rangeStart} onChange={(event) => setRangeStart(Math.min(Number(event.target.value), rangeEnd))} /></div>
                 <div className="filter-field"><label htmlFor="profile-end">TO YEAR · {rangeEnd}</label><input id="profile-end" type="range" min={rangeStart} max={yearMax} value={rangeEnd} onChange={(event) => setRangeEnd(Math.max(Number(event.target.value), rangeStart))} /></div>
               </section>
+              {activeCountryRows.length === 0 && <div className="method-strip warning"><strong>No observations in this interval</strong><span>Choose another economy or widen the year range. The dashboard does not fill missing GDP years with estimates.</span></div>}
               <div className="metric-grid three">
                 <Metric label="GDP · SELECTED END YEAR" value={money(profileLatest?.gdp)} footnote={profileLatest ? String(profileLatest.year) : "No observation"} />
                 <Metric label="LATEST ANNUAL NOMINAL CHANGE" value={percent(profileGrowth)} footnote="Requires consecutive years" accent="teal" />
@@ -700,7 +706,9 @@ export default function Home() {
             <>
               <section className="panel">
                 <div className="panel-header panel-header-wrap"><div><div className="panel-kicker">COMPARISON SET</div><h2>Choose economies</h2></div><span className="panel-unit">{compareNames.length} SELECTED · UP TO 8</span></div>
-                <div className="choice-list">{countryNames.map((name) => <label className="choice" key={name}><input type="checkbox" checked={compareNames.includes(name)} onChange={() => toggleCompare(name)} /><span>{name}</span></label>)}</div>
+                <div className="compare-search-row"><input type="search" value={compareSearch} onChange={(event) => setCompareSearch(event.target.value)} placeholder="Find an economy…" aria-label="Search economies to compare" /><span>{compareNames.length} / 8 selected</span></div>
+                <div className="choice-list">{visibleCompareCountries.map((name) => <label className="choice" key={name}><input type="checkbox" checked={compareNames.includes(name)} onChange={() => toggleCompare(name)} disabled={!compareNames.includes(name) && compareNames.length >= 8} /><span>{name}</span></label>)}</div>
+                {visibleCompareCountries.length === 0 && <p className="chart-note">No economies match that search.</p>}
                 <div className="segmented"><button className={compareMode === "level" ? "selected" : ""} onClick={() => setCompareMode("level")}>GDP level</button><button className={compareMode === "index" ? "selected" : ""} onClick={() => setCompareMode("index")}>Indexed · start = 100</button></div>
               </section>
               <section className="panel">
@@ -709,7 +717,7 @@ export default function Home() {
                   {compareMode === "level" ? <LineChart data={mergeSeries(selectedCompareRows)}><CartesianGrid stroke="#E0E9E3" vertical={false} /><XAxis dataKey="year" tick={{ fill: "#718176", fontSize: 11 }} tickLine={false} axisLine={false} /><YAxis tickFormatter={tickMoney} tick={{ fill: "#718176", fontSize: 11 }} tickLine={false} axisLine={false} width={65} /><Tooltip content={<AppChartTooltip />} /><Legend wrapperStyle={{ color: "#65766B", fontSize: 11 }} />{compareNames.map((name, index) => <Line key={name} dataKey={name} name={name} stroke={COLORS[index % COLORS.length]} strokeWidth={2} dot={false} />)}</LineChart> :
                   <LineChart data={mergeIndexed(indexedCompareRows as Array<Observation & { index: number }>)}><CartesianGrid stroke="#E0E9E3" vertical={false} /><XAxis dataKey="year" tick={{ fill: "#718176", fontSize: 11 }} tickLine={false} axisLine={false} /><YAxis tick={{ fill: "#718176", fontSize: 11 }} tickLine={false} axisLine={false} /><ReferenceLine y={100} stroke="#6B7D72" strokeDasharray="4 4" /><Tooltip /><Legend wrapperStyle={{ color: "#65766B", fontSize: 11 }} />{compareNames.map((name, index) => <Line key={name} dataKey={name} name={name} stroke={COLORS[index % COLORS.length]} strokeWidth={2} dot={false} />)}</LineChart>}
                 </ResponsiveContainer></div>
-                <p className="chart-note">Each indexed country starts at its first available observation. The indexed view compares the pace of change, not absolute GDP size.</p>
+                {compareNames.length === 0 ? <p className="chart-note">Select at least one economy above to display a comparison.</p> : <p className="chart-note">Each indexed economy starts at its own first available observation. Starting years can differ, so compare the paths with their coverage in mind. The indexed view compares the pace of change, not absolute GDP size.</p>}
               </section>
             </>
           )}
@@ -722,9 +730,9 @@ export default function Home() {
               </section>
               <section className="panel">
                 <div className="panel-header"><div><div className="panel-kicker">REGIONAL ECONOMIC SCALE</div><h2>GDP by region</h2></div><span className="panel-unit">CURRENT US$</span></div>
-                <div className="chart-wrap tall"><ResponsiveContainer width="100%" height="100%"><LineChart data={mergeSeries(regionRows)}>
+                {regionRows.length > 0 ? <div className="chart-wrap tall"><ResponsiveContainer width="100%" height="100%"><LineChart data={mergeSeries(regionRows)}>
                   <CartesianGrid stroke="#E0E9E3" vertical={false} /><XAxis dataKey="year" tick={{ fill: "#718176", fontSize: 11 }} tickLine={false} axisLine={false} /><YAxis tickFormatter={tickMoney} tick={{ fill: "#718176", fontSize: 11 }} tickLine={false} axisLine={false} width={65} /><Tooltip content={<AppChartTooltip />} /><Legend wrapperStyle={{ color: "#65766B", fontSize: 11 }} />{Array.from(new Set(regionRows.map((row) => row.name))).map((name, index) => <Line key={name} dataKey={name} name={name} stroke={COLORS[index % COLORS.length]} strokeWidth={2} dot={false} />)}
-                </LineChart></ResponsiveContainer></div>
+                </LineChart></ResponsiveContainer></div> : <p className="chart-note">Select one or more regions above to view the source aggregates.</p>}
                 <p className="chart-note">These regional aggregates are provided by the source. They are not calculated by adding the individual country observations displayed here.</p>
               </section>
             </>
@@ -734,9 +742,10 @@ export default function Home() {
             <>
               <div className="metric-grid three">
                 <Metric label="COUNTRY-YEAR OBSERVATIONS" value={growthRows.length.toLocaleString("en-US")} footnote="Consecutive years only" />
-                <Metric label="MEDIAN NOMINAL CHANGE" value={percent(median(growthRows.map((row) => row.change)))} footnote="Across available observations" accent="teal" />
+                <Metric label="MEDIAN NOMINAL CHANGE" value={growthRows.length ? percent(median(growthRows.map((row) => row.change))) : "—"} footnote="Across available observations" accent="teal" />
                 <Metric label="NEGATIVE CHANGES" value={growthRows.length ? ((growthRows.filter((row) => row.change < 0).length / growthRows.length) * 100).toFixed(1) + "%" : "—"} footnote="Share of country-year observations" accent="blue" />
               </div>
+              {growthRows.length === 0 && <div className="method-strip warning"><strong>Not enough consecutive observations</strong><span>Growth calculations require a reported observation in two adjacent years. No missing years are interpolated.</span></div>}
               <div className="chart-grid">
                 <section className="panel">
                   <div className="panel-header"><div><div className="panel-kicker">DISTRIBUTION</div><h2>Annual nominal change</h2></div><span className="panel-unit">COUNTRY-YEAR · %</span></div>
@@ -770,7 +779,7 @@ export default function Home() {
                 <div className="panel-header"><div><div className="panel-kicker">COUNTRY LEAGUE TABLE</div><h2>{rankMode === "size" ? "Largest national economies" : rankMode === "change" ? "Latest annual nominal changes" : "Nominal compound annual growth"}</h2></div><span className="panel-unit">TOP 15</span></div>
                 <div className="chart-wrap tall"><ResponsiveContainer width="100%" height="100%"><BarChart data={rankings} layout="vertical" margin={{ left: 8, right: 20 }}><CartesianGrid stroke="#E0E9E3" horizontal={false} /><XAxis type="number" tickFormatter={rankMode === "size" ? tickMoney : (value) => value + "%"} tick={{ fill: "#718176", fontSize: 10 }} tickLine={false} axisLine={false} /><YAxis type="category" dataKey="name" width={145} tick={{ fill: "#47584D", fontSize: 11 }} tickLine={false} axisLine={false} /><Tooltip formatter={(value: any) => rankMode === "size" ? money(Number(value)) : percent(Number(value))} /><Bar dataKey="value" fill={rankMode === "size" ? "#14804A" : "#0D9488"} barSize={14} radius={[0, 2, 2, 0]} /></BarChart></ResponsiveContainer></div>
                 <div className="table-wrap"><table><thead><tr><th>ECONOMY</th><th>OBSERVATION YEAR</th><th>MEASURE</th></tr></thead><tbody>{[...rankings].reverse().map((row) => <tr key={row.name}><td>{row.name}</td><td>{row.year}</td><td>{row.label}</td></tr>)}</tbody></table></div>
-                <p className="chart-note">Country rankings exclude regional and income-group aggregates. Each country uses its own latest available observation.</p>
+                {rankings.length === 0 ? <p className="chart-note">No countries have enough observations for this ranking measure and period.</p> : <p className="chart-note">Country rankings exclude regional and income-group aggregates. Each country uses its own latest available observation.</p>}
               </section>
             </>
           )}
@@ -813,6 +822,7 @@ export default function Home() {
                 <section className="panel method-card"><div className="panel-kicker">05 / CAGR</div><h2>Compound annual rate</h2><p>Compound annual growth rate answers a practical question: if the change had happened at a steady rate each year, what rate would connect the start and end values? It smooths the journey, so it does not show the ups and downs in between.</p></section>
                 <section className="panel method-card"><div className="panel-kicker">06 / INDEXING</div><h2>Common starting point</h2><p>Indexing gives every selected economy the same starting point of 100. It helps compare which economy grew faster over the chosen period, even when one economy started much larger than another.</p></section>
                 <section className="panel method-card"><div className="panel-kicker">07 / SCENARIOS</div><h2>User-entered assumptions</h2><p>The scenario tool takes the latest reported number and applies the growth rate you choose. It is a simple “what if?” exercise. It does not know future shocks, policy changes, inflation or exchange rates, so it must not be read as an official forecast.</p></section>
+                <section className="panel method-card"><div className="panel-kicker">08 / DATA FRESHNESS</div><h2>Annual releases, refreshed checks</h2><p>GDP is an annual national-accounts measure. The dashboard checks provider feeds periodically and refreshes after new source releases or revisions; it does not imply that GDP observations update minute by minute. The date the source last updated and the time this dashboard retrieved it are shown separately.</p></section>
               </div>
               <section className="panel source-panel"><div className="panel-kicker">DATA QUALITY & LIMITATIONS</div><h2>What the dashboard does — and does not — claim</h2><ul><li>Country rankings exclude source aggregates such as regional and income groups.</li><li>Every series uses its own latest available year; countries can have different coverage.</li><li>Missing observations remain missing. The application does not silently fill gaps.</li><li>Nominal changes in current US dollars are not inflation-adjusted real GDP growth.</li><li>Reported observations are pulled directly from the World Bank API. The IMF outlook is displayed separately because current-year estimates and future projections are not reported actual GDP.</li></ul></section>
             </>
