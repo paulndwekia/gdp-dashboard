@@ -44,6 +44,9 @@ type Dataset = {
   refreshIntervalHours: number;
   worldBankStatus: "live" | "fallback";
   imfStatus: "live" | "unavailable";
+  worldBankLastUpdated: string | null;
+  imfLastModified: string | null;
+  checkedAt: string;
   warnings: string[];
 };
 
@@ -53,6 +56,7 @@ type PageKey =
   | "Compare economies"
   | "Regional monitor"
   | "Growth analytics"
+  | "Data Explorer"
   | "Rankings"
   | "Forecast lab"
   | "Methodology";
@@ -63,6 +67,7 @@ const NAV: PageKey[] = [
   "Compare economies",
   "Regional monitor",
   "Growth analytics",
+  "Data Explorer",
   "Rankings",
   "Forecast lab",
   "Methodology",
@@ -75,7 +80,7 @@ const NAV_GROUPS: Array<{ label: string; items: PageKey[] }> = [
   },
   {
     label: "ANALYSIS",
-    items: ["Growth analytics", "Rankings"],
+    items: ["Growth analytics", "Data Explorer", "Rankings"],
   },
   {
     label: "TOOLS & REFERENCE",
@@ -379,6 +384,7 @@ export default function Home() {
     "Compare economies": "Compare economic scale or align different economies to a common starting point.",
     "Regional monitor": "Explore regional aggregates from the source dataset without mixing them into country rankings.",
     "Growth analytics": "Study the distribution and latest recorded annual nominal changes across countries.",
+    "Data Explorer": "Search the World Bank indicator library, find the series you need, and inspect its country and year coverage.",
     "Rankings": "Rank national economies using transparent measures and their own latest available observations.",
     "Forecast lab": "Build simple, assumption-led scenarios from the last recorded GDP observation.",
     "Methodology": "Review the source, coverage, definitions and limits behind every calculation.",
@@ -463,9 +469,11 @@ export default function Home() {
           </label>
           <div className="topbar-right">
             <span className={"status-dot" + (data.worldBankStatus === "live" && data.imfStatus === "live" ? "" : " warning")} />
-            <span>Live sources</span>
+            <span>{data.worldBankStatus === "live" ? "World Bank API" : "World Bank fallback"}</span>
             <span className="topbar-divider" />
-            <span>Updated {new Date(data.updatedAt).toLocaleString("en-KE", { dateStyle: "medium", timeStyle: "short" })}</span>
+            <span>{data.imfStatus === "live" ? "IMF WEO" : "IMF unavailable"}</span>
+            <span className="topbar-divider" />
+            <span>Checked {new Date(data.checkedAt || data.updatedAt).toLocaleString("en-KE", { dateStyle: "medium", timeStyle: "short" })}</span>
             <button className="refresh-button" onClick={refreshDataset} disabled={refreshing}>
               <span className={refreshing ? "refresh-symbol spinning" : "refresh-symbol"}>↻</span>
               {refreshing ? "Refreshing…" : "Refresh"}
@@ -695,6 +703,10 @@ export default function Home() {
             </>
           )}
 
+          {active === "Data Explorer" && (
+            <DataExplorer />
+          )}
+
           {active === "Rankings" && (
             <>
               <section className="panel filter-panel ranking-filters">
@@ -741,13 +753,13 @@ export default function Home() {
           {active === "Methodology" && (
             <>
               <div className="method-grid">
-                <section className="panel method-card"><div className="panel-kicker">01 / REPORTED DATA</div><h2>World Bank GDP</h2><p>The dashboard requests the latest available annual country and regional observations for GDP (current US$), indicator <code>NY.GDP.MKTP.CD</code>, directly from the World Bank API. It retains the full historical series.</p><a href="https://data.worldbank.org/indicator/NY.GDP.MKTP.CD" target="_blank" rel="noreferrer">Open source indicator ↗</a></section>
-                <section className="panel method-card"><div className="panel-kicker">02 / ESTIMATES & PROJECTIONS</div><h2>IMF World Economic Outlook</h2><p>The dashboard separately retrieves IMF nominal GDP at current prices (<code>NGDPD</code>) and real GDP growth (<code>NGDP_RPCH</code>). Later years are labelled as estimates or projections and are not treated as reported actuals.</p><a href="https://data.imf.org/en/datasets/IMF.RES%3AWEO" target="_blank" rel="noreferrer">Open latest WEO dataset ↗</a></section>
-                <section className="panel method-card"><div className="panel-kicker">02 / GDP LEVEL</div><h2>Current US dollars</h2><p>The source reports nominal GDP translated into current US dollars. These values include price-level changes and exchange-rate movements. Values remain subject to release and revision schedules.</p></section>
-                <section className="panel method-card"><div className="panel-kicker">03 / ANNUAL CHANGE</div><h2>Consecutive observations</h2><p>Annual nominal change is calculated as (GDP in year t ÷ GDP in year t−1 − 1) × 100. Missing years are not interpolated.</p></section>
-                <section className="panel method-card"><div className="panel-kicker">04 / CAGR</div><h2>Compound annual rate</h2><p>CAGR is (ending value ÷ starting value) raised to 1 ÷ elapsed years, minus 1. The selected endpoints are the first and last available observations in the period.</p></section>
-                <section className="panel method-card"><div className="panel-kicker">05 / INDEXING</div><h2>Common starting point</h2><p>Indexed GDP divides each country's observations by its own first available value and multiplies by 100. It compares paths, not absolute economic size.</p></section>
-                <section className="panel method-card"><div className="panel-kicker">06 / SCENARIOS</div><h2>User-entered assumptions</h2><p>The scenario lab applies GDP at t+h = GDP at t × (1+g) raised to h. These are mechanical illustrations, not official projections.</p></section>
+                <section className="panel method-card"><div className="panel-kicker">01 / WHERE THE NUMBERS COME FROM</div><h2>Start with the original source</h2><p>For the historical record, we go straight to the World Bank. Its GDP series is called <code>NY.GDP.MKTP.CD</code>. We pull the latest release, keep the year attached to every figure, and do not fill missing years with guesses.</p><a href="https://data.worldbank.org/indicator/NY.GDP.MKTP.CD" target="_blank" rel="noreferrer">See the World Bank GDP series ↗</a></section>
+                <section className="panel method-card"><div className="panel-kicker">02 / ESTIMATES & PROJECTIONS</div><h2>IMF World Economic Outlook</h2><p>The IMF publishes a separate outlook. We use it to show the latest estimates and future projections when they go beyond the last reported World Bank year. These figures are useful for forward-looking analysis, but they are not presented as historical results.</p><a href="https://data.imf.org/en/datasets/IMF.RES%3AWEO" target="_blank" rel="noreferrer">Open latest WEO dataset ↗</a></section>
+                <section className="panel method-card"><div className="panel-kicker">02 / GDP LEVEL</div><h2>Current US dollars</h2><p>Nominal GDP is the value of the economy measured at the prices and exchange rates of that year. It can rise because more is produced, because prices rise, or because the exchange rate changes. That is why nominal GDP is not the same as real economic growth.</p></section>
+                <section className="panel method-card"><div className="panel-kicker">03 / ANNUAL CHANGE</div><h2>Consecutive observations</h2><p>We compare one year with the year immediately before it. The result tells you how much the dollar value changed, not how much real production grew. When a year is missing, we leave the comparison blank instead of pretending to know the change.</p></section>
+                <section className="panel method-card"><div className="panel-kicker">04 / CAGR</div><h2>Compound annual rate</h2><p>Compound annual growth rate answers a practical question: if the change had happened at a steady rate each year, what rate would connect the start and end values? It smooths the journey, so it does not show the ups and downs in between.</p></section>
+                <section className="panel method-card"><div className="panel-kicker">05 / INDEXING</div><h2>Common starting point</h2><p>Indexing gives every selected economy the same starting point of 100. It helps compare which economy grew faster over the chosen period, even when one economy started much larger than another.</p></section>
+                <section className="panel method-card"><div className="panel-kicker">06 / SCENARIOS</div><h2>User-entered assumptions</h2><p>The scenario tool takes the latest reported number and applies the growth rate you choose. It is a simple “what if?” exercise. It does not know future shocks, policy changes, inflation or exchange rates, so it must not be read as an official forecast.</p></section>
               </div>
               <section className="panel source-panel"><div className="panel-kicker">DATA QUALITY & LIMITATIONS</div><h2>What the dashboard does — and does not — claim</h2><ul><li>Country rankings exclude source aggregates such as regional and income groups.</li><li>Every series uses its own latest available year; countries can have different coverage.</li><li>Missing observations remain missing. The application does not silently fill gaps.</li><li>Nominal changes in current US dollars are not inflation-adjusted real GDP growth.</li><li>Reported observations are pulled directly from the World Bank API. The IMF outlook is displayed separately because current-year estimates and future projections are not reported actual GDP.</li></ul></section>
             </>
@@ -755,7 +767,7 @@ export default function Home() {
 
           <footer className="page-footer">
             <span>GDP Research · Independent economic analysis</span>
-            <span>Reported data: World Bank · Outlook: IMF World Economic Outlook</span>
+            <span>Data: World Bank Open Data · Outlook: IMF World Economic Outlook · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></span>
           </footer>
         </div>
       </main>
